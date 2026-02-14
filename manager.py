@@ -1,58 +1,105 @@
-"""
-AAD Manager Node 
-
-This file was derived from the EmotionDetection.py file stripping down any emotion detecting logic
-and only retaining the ROS 2 node and class structure. 
-This is more of a starting point for structuring the AAD Anomaly Detection Pipeline
-
-Core responsibilities to implement later:
-- Subscribe to selected raw topic(s)
-- Perform lightweight processing/trimming of incoming data
-- Publish to an AAD processed/trimmed topic
-- Trigger artifact recording and API calls (config-driven)
-"""
+import os
+import yaml
 
 import rclpy
 from rclpy.node import Node
+from std_msgs.msg import String
 
 
 class AADManager(Node):
-    """
-    AAD Manager Node
-
-    Minimal ROS2 node scaffold. This will evolve into the central
-    point for:
-    - ingesting raw data from the cart stack
-    - producing a trimmed/processed AAD topic
-    - coordinating artifact recording + API triggers
-    """
-
     def __init__(self):
         super().__init__('aad_manager_node')
 
-        # Placeholders for ROS interfaces. Need to fill in once names are finalized. 
-        self.subscription = None
-        self.publisher = None
+        # Load config once on startup
+        self.config = self._load_config()
 
-        # Uses get_logger instead of print so logs integrate with ROS tooling.
+        # Sprint-required timing variables (with safe defaults)
+        self.artifact_frequency_seconds = self.config.get("artifact_frequency_seconds", 30)
+        self.artifact_duration_seconds = self.config.get("artifact_duration_seconds", 10)
+        self.api_frequency_seconds = self.config.get("api_frequency_seconds", 60)
+
+        # Load topic names from config (fallback to defaults)
+        self.raw_input_topic = self.config.get("raw_input_topic", "/aad/raw_input")
+        self.trimmed_output_topic = self.config.get("trimmed_output_topic", "/aad/trimmed_data")
+
+        self.get_logger().info(
+            "Loaded config: artifact_frequency_seconds=%s, artifact_duration_seconds=%s, api_frequency_seconds=%s",
+            str(self.artifact_frequency_seconds),
+            str(self.artifact_duration_seconds),
+            str(self.api_frequency_seconds),
+        )
+
+        self.get_logger().info(
+            "Topics configured: raw_input_topic=%s, trimmed_output_topic=%s",
+            self.raw_input_topic,
+            self.trimmed_output_topic,
+        )
+
+        # Create publisher for trimmed/processed output
+        self.publisher = self.create_publisher(String, self.trimmed_output_topic, 10)
+
+        # Create subscription for raw input
+        self.subscription = self.create_subscription(
+            String,
+            self.raw_input_topic,
+            self.listener_callback,
+            10
+        )
+
+        # Simple message counter for debugging
+        self._msg_count = 0
         self.get_logger().info("AAD Manager node started.")
 
-    def listener_callback(self, msg) -> None:
+    def _load_config(self) -> dict:
         """
-        Callback stub for incoming messages.
+        Loads config.yaml from disk.
 
-        Args:
-            msg: ROS message received from the subscribed topic.
+        Resolution order:
+        1) AAD_CONFIG_PATH environment variable (useful for Docker/compose)
+        2) config.yaml in the same folder as this script
         """
-        # Placeholder: implement trimming/transformation logic here.
-        # Then publish to your processed topic via self.publisher.publish(processed_msg).
-        self.get_logger().debug("Received message in listener_callback (stub).")
+        env_path = os.getenv("AAD_CONFIG_PATH")
+        if env_path and os.path.isfile(env_path):
+            config_path = env_path
+        else:
+            config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+
+        if not os.path.isfile(config_path):
+            self.get_logger().warn(f"Config file not found at {config_path}. Using defaults.")
+            return {}
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                self.get_logger().warn("Config file loaded but is not a YAML mapping. Using defaults.")
+                return {}
+            return data
+        except Exception as e:
+            self.get_logger().error(f"Failed to load config file {config_path}: {e}. Using defaults.")
+            return {}
+
+    def listener_callback(self, msg: String) -> None:
+        self._msg_count += 1
+
+        raw_text = msg.data if msg.data is not None else ""
+        trimmed_text = raw_text.strip()
+
+        # Mock processing: make it obvious something changed
+        max_len = 80
+        if len(trimmed_text) > max_len:
+            trimmed_text = trimmed_text[:max_len] + "...(trimmed)"
+
+        out = String()
+        out.data = f"[AAD_PROCESSED] {trimmed_text}"
+        self.publisher.publish(out)
+
+        # Keep logs readable during tests
+        if self._msg_count % 20 == 0:
+            self.get_logger().info(f"Processed {self._msg_count} messages.")
 
 
 def main(args=None) -> None:
-    """
-    Entry point for running the node.
-    """
     rclpy.init(args=args)
     node = AADManager()
 
