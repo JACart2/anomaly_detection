@@ -1,24 +1,34 @@
 from collections import deque
-import json
 import threading
 
-class JsonRingBuffer:
+class StringRingBuffer:
     def __init__(self, max_items=10_000):
+        # deque with maxlen automatically handles the "ring" behavior
+        # (removes oldest item when a new one is added)
         self.buffer = deque(maxlen=max_items)
         self.lock = threading.Lock()
 
-    def add(self, data: dict):
-        """Add a JSON object (dict)"""
-        if not isinstance(data, dict):
-            raise TypeError("Data must be a dict (JSON object)")
+    def add(self, data: str):
+        """Add a string to the buffer."""
+        if not isinstance(data, str):
+            # If you still get dicts occasionally, you could use:
+            # data = json.dumps(data) 
+            # but for performance, it's better to enforce string input.
+            raise TypeError(f"Data must be a string, got {type(data)}")
+            
         with self.lock:
             self.buffer.append(data)
 
     def snapshot(self):
-        """Get a copy of the current buffer"""
+        """Get a copy of the current buffer as a list of strings."""
         with self.lock:
             return list(self.buffer)
 
     def clear(self):
+        """Remove all items from the buffer."""
         with self.lock:
             self.buffer.clear()
+
+    def __len__(self):
+        """Allow checking size with len(buffer_instance)"""
+        return len(self.buffer)
