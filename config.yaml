@@ -5,5 +5,6 @@ artifact_frequency_seconds: 30
 artifact_duration_seconds: 10
 api_frequency_seconds: 60
 
-raw_input_topic: "/aad/raw_input" #Update it to match github
-trimmed_output_topic: "/add/trimmed_data" #Update to match github
+raw_input_topic: "raw_input" #Update it to match github
+#trimmed_output_topic: "/add/trimmed_data" #Update to match github
+
