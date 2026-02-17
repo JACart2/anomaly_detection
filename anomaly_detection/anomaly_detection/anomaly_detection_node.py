@@ -1,13 +1,17 @@
 import os
 import yaml
+import json
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from anomaly_logging.msg import AnomalyLog
 
+from JsonRingBuffer import JsonRingBuffer
+from rclpy_message_converter import json_message_converter
 
-class AnomalyDetectionNode(Node)::
+
+class AnomalyDetectionNode(Node):
     def __init__(self):
         super().__init__('anomaly_detection')
 
@@ -36,6 +40,9 @@ class AnomalyDetectionNode(Node)::
             #self.trimmed_output_topic,
         )
 
+        # Need to change so it used config #####
+        self.queue = JsonRingBuffer(max_items=100)
+
         # Create subscription for raw input
         self.subscription = self.create_subscription(
             AnomalyLog,
@@ -43,6 +50,8 @@ class AnomalyDetectionNode(Node)::
             self.log_caching_callback,
             10
         )
+
+        self.timer = self.create_timer(10, self.llm_callback)
 
         # Simple message counter for debugging
         self._msg_count = 0
@@ -78,12 +87,26 @@ class AnomalyDetectionNode(Node)::
             return {}
 
     def log_caching_callback(self, msg) -> None:
-        
+        json_str = json_message_converter.convert_ros_message_to_json(msg)
+        self.queue.add(json_str)
+    
+    def to_jsonl(buffer):
+        return "\n".join(json.dumps(obj, separators=(",", ":")) for obj in buffer)
+
+    def llm_callback(self):
+        if not self.queue:
+            self.get_logger().info("No anomaly messages received yet.")
+        else:
+            # Process the messages with your LLM logic here
+            self.get_logger().info(
+                f"Processing {len(self.msgs)} anomaly messages..."
+            )
+            self.msgs.clear()
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
-    node = AADManager()
+    node = AnomalyDetectionNode()
 
     try:
         rclpy.spin(node)
