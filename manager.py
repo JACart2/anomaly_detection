@@ -19,8 +19,8 @@ class AADManager(Node):
         self.api_frequency_seconds = self.config.get("api_frequency_seconds", 60)
 
         # Load topic names from config (fallback to defaults)
-        self.raw_input_topic = self.config.get("raw_input_topic", "/aad/raw_input")
-        self.trimmed_output_topic = self.config.get("trimmed_output_topic", "/aad/trimmed_data")
+        self.raw_input_topic = self.config.get("raw_input_topic", "raw_input")
+        #self.trimmed_output_topic = self.config.get("trimmed_output_topic", "trimmed_data")
 
         self.get_logger().info(
             "Loaded config: artifact_frequency_seconds=%s, artifact_duration_seconds=%s, api_frequency_seconds=%s",
@@ -32,7 +32,7 @@ class AADManager(Node):
         self.get_logger().info(
             "Topics configured: raw_input_topic=%s, trimmed_output_topic=%s",
             self.raw_input_topic,
-            self.trimmed_output_topic,
+            #self.trimmed_output_topic,
         )
 
         # Create publisher for trimmed/processed output
