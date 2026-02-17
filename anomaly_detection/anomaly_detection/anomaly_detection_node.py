@@ -35,9 +35,8 @@ class AnomalyDetectionNode(Node):
         )
 
         self.get_logger().info(
-            "Topics configured: raw_input_topic=%s, trimmed_output_topic=%s",
-            self.raw_input_topic,
-            #self.trimmed_output_topic,
+            "Topics configured: raw_input_topic=%s",
+            self.raw_input_topic
         )
 
         # Need to change so it used config #####
@@ -55,7 +54,7 @@ class AnomalyDetectionNode(Node):
 
         # Simple message counter for debugging
         self._msg_count = 0
-        self.get_logger().info("AAD Manager node started.")
+        self.get_logger().info("Anomaly Detection node started.")
 
     def _load_config(self) -> dict:
         """
@@ -87,8 +86,8 @@ class AnomalyDetectionNode(Node):
             return {}
 
     def log_caching_callback(self, msg) -> None:
-        json_str = json_message_converter.convert_ros_message_to_json(msg)
-        self.queue.add(json_str)
+        msg_str = str(msg
+        self.queue.add(msg_str)
     
     def to_jsonl(buffer):
         return "\n".join(json.dumps(obj, separators=(",", ":")) for obj in buffer)
@@ -99,7 +98,7 @@ class AnomalyDetectionNode(Node):
         else:
             # Process the messages with your LLM logic here
             self.get_logger().info(
-                f"Processing {len(self.msgs)} anomaly messages..."
+                f"Processing {len(self.queue.buffer)} anomaly messages..."
             )
             self.queue.clear()
 
