@@ -101,7 +101,7 @@ class AnomalyDetectionNode(Node):
             self.get_logger().info(
                 f"Processing {len(self.msgs)} anomaly messages..."
             )
-            self.msgs.clear()
+            self.queue.clear()
 
 
 def main(args=None) -> None:
