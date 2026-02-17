@@ -86,7 +86,7 @@ class AnomalyDetectionNode(Node):
             return {}
 
     def log_caching_callback(self, msg) -> None:
-        msg_str = str(msg
+        msg_str = str(msg)
         self.queue.add(msg_str)
     
     def to_jsonl(buffer):
