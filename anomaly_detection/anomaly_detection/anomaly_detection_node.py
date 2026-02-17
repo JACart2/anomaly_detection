@@ -7,7 +7,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from anomaly_logging.msg import AnomalyLog
 
-from JsonRingBuffer import JsonRingBuffer
+from StringRingBuffer import StringRingBuffer
 from rclpy_message_converter import json_message_converter
 
 
@@ -40,7 +40,7 @@ class AnomalyDetectionNode(Node):
         )
 
         # Need to change so it used config #####
-        self.queue = JsonRingBuffer(max_items=100)
+        self.queue = StringRingBuffer(max_items=100)
 
         # Create subscription for raw input
         self.subscription = self.create_subscription(
@@ -50,7 +50,7 @@ class AnomalyDetectionNode(Node):
             10
         )
 
-        self.timer = self.create_timer(10, self.llm_callback)
+        self.timer = self.create_timer(self.api_frequency_seconds, self.llm_callback)
 
         # Simple message counter for debugging
         self._msg_count = 0
@@ -93,14 +93,18 @@ class AnomalyDetectionNode(Node):
         return "\n".join(json.dumps(obj, separators=(",", ":")) for obj in buffer)
 
     def llm_callback(self):
-        if not self.queue:
+        raw_list = self.queue.snapshot()
+        
+        if not raw_list:
             self.get_logger().info("No anomaly messages received yet.")
-        else:
-            # Process the messages with your LLM logic here
-            self.get_logger().info(
-                f"Processing {len(self.queue.buffer)} anomaly messages..."
-            )
-            self.queue.clear()
+            return
+            
+        full_payload = "".join(raw_list) 
+        # Process the messages with your LLM logic here
+        self.get_logger().info(
+            f"Processing {len(self.queue.buffer)} anomaly messages..."
+        )
+        self.queue.clear()
 
 
 def main(args=None) -> None:
