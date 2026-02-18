@@ -7,8 +7,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from anomaly_logging.msg import AnomalyLog
 
-from StringRingBuffer import StringRingBuffer
-from rclpy_message_converter import json_message_converter
+from anomaly_detection.StringRingBuffer import StringRingBuffer
 
 
 class AnomalyDetectionNode(Node):
@@ -28,16 +27,12 @@ class AnomalyDetectionNode(Node):
         #self.trimmed_output_topic = self.config.get("trimmed_output_topic", "trimmed_data")
 
         self.get_logger().info(
-            "Loaded config: artifact_frequency_seconds=%s, artifact_duration_seconds=%s, api_frequency_seconds=%s",
-            str(self.artifact_frequency_seconds),
-            str(self.artifact_duration_seconds),
-            str(self.api_frequency_seconds),
+            f"Loaded config: "
+            f"artifact_frequency_seconds={self.artifact_frequency_seconds}, "
+            f"artifact_duration_seconds={self.artifact_duration_seconds}, "
+            f"api_frequency_seconds={self.api_frequency_seconds}"
         )
 
-        self.get_logger().info(
-            "Topics configured: raw_input_topic=%s",
-            self.raw_input_topic
-        )
 
         # Need to change so it used config #####
         self.queue = StringRingBuffer(max_items=100)
@@ -86,6 +81,7 @@ class AnomalyDetectionNode(Node):
             return {}
 
     def log_caching_callback(self, msg) -> None:
+        # self.get_logger
         msg_str = str(msg)
         self.queue.add(msg_str)
     
