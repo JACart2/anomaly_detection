@@ -20,7 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             'fake_camera_node = tester.fake_camera_node:main',
-            'fake_lidar_node = tester.fake_lidar_node:main',
+            'lidar_test_node = tester.lidar_test_node:main',
         ],
     },
 )
