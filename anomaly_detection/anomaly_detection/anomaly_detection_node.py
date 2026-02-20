@@ -5,7 +5,7 @@ import json
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from anomaly_logging.msg import AnomalyLog
+from anomaly_msg.msg import AnomalyLog
 
 from anomaly_detection.StringRingBuffer import StringRingBuffer
 
@@ -82,6 +82,7 @@ class AnomalyDetectionNode(Node):
 
     def log_caching_callback(self, msg) -> None:
         # self.get_logger
+        self.get_logger().info("Recieved lidar data")
         msg_str = str(msg)
         self.queue.add(msg_str)
     

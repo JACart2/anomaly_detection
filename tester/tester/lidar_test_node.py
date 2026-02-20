@@ -11,8 +11,8 @@ class LidarTestNode(Node):
         super().__init__('lidar_test_node')
         self.publisher = self.create_publisher(AnomalyLog, '/ai_anomaly_logging', 10)
         self.subscription = self.create_subscription(
-            PointCloud,
-            '/lidar',
+            PointCloud2,
+            '/velodyne_points',
             self.lidar_callback,
             10
         )
@@ -32,8 +32,9 @@ class LidarTestNode(Node):
         msg.description = "roof_lidar"
         msg.data_type = "PointCloud"
         msg.data = list(self.lidar_data.data)
-        self.publisher.publish(msg)
-        self.get_logger().info("Published lidar data")
+        if self.lidar_data:
+            self.publisher.publish(msg)
+            self.get_logger().info("Published lidar data")
 
 def main():
     rclpy.init()
