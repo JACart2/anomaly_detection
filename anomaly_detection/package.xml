@@ -13,9 +13,9 @@
   <test_depend>python3-pytest</test_depend>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>anomaly_logging</exec_depend>
-  <build_depend>anomaly_logging</build_depend>
-  <build_export_depend>anomaly_logging</build_export_depend>
+  <exec_depend>anomaly_msg</exec_depend>
+  <build_depend>anomaly_msg</build_depend>
+  <build_export_depend>anomaly_msg</build_export_depend>
 
 
   <export>

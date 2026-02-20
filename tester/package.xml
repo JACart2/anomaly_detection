@@ -10,7 +10,7 @@
   <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>anomaly_logging</exec_depend>
+  <exec_depend>anomaly_msg</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

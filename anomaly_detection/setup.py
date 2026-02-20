@@ -6,7 +6,7 @@ setup(
     name=package_name,
     version='0.0.1',
     packages=['anomaly_detection'],
-    install_requires=['setuptools', 'anomaly_logging'],
+    install_requires=['setuptools', 'anomaly_msg'],
     zip_safe=True,
     maintainer='Your Name',
     maintainer_email='you@example.com',
