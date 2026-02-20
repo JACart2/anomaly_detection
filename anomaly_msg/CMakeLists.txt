@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(anomaly_logging)
+project(anomaly_msg)
 
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)

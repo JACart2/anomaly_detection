@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>anomaly_logging</name>
+  <name>anomaly_msg</name>
   <version>0.0.1</version>
   <description>Defines anomaly messages</description>
   <maintainer email="you@example.com">Your Name</maintainer>
