@@ -1,34 +1,64 @@
-from collections import deque
-import threading
-
 class StringRingBuffer:
-    def __init__(self, max_items=10_000):
-        # deque with maxlen automatically handles the "ring" behavior
-        # (removes oldest item when a new one is added)
-        self.buffer = deque(maxlen=max_items)
-        self.lock = threading.Lock()
+    def __init__(self, max_items: int):
+        self.max_items = max_items
 
-    def add(self, data: str):
-        """Add a string to the buffer."""
-        if not isinstance(data, str):
-            # If you still get dicts occasionally, you could use:
-            # data = json.dumps(data) 
-            # but for performance, it's better to enforce string input.
-            raise TypeError(f"Data must be a string, got {type(data)}")
-            
-        with self.lock:
-            self.buffer.append(data)
+        # underlying storage
+        self.buffer = [None] * max_items
 
-    def snapshot(self):
-        """Get a copy of the current buffer as a list of strings."""
-        with self.lock:
-            return list(self.buffer)
+        # index of oldest item
+        self.head = 0
 
-    def clear(self):
-        """Remove all items from the buffer."""
-        with self.lock:
-            self.buffer.clear()
+        # index where next item will be written
+        self.tail = 0
 
-    def __len__(self):
-        """Allow checking size with len(buffer_instance)"""
-        return len(self.buffer)
+        # current number of items
+        self.size = 0
+
+
+    def add(self, item: str) -> None:
+        """
+        Add a string to the buffer.
+        If full, evicts oldest item (FIFO).
+        """
+
+        # write new item
+        self.buffer[self.tail] = item
+
+        if self.size == self.max_items:
+            # buffer full → evict oldest
+            self.head = (self.head + 1) % self.max_items
+        else:
+            self.size += 1
+
+        # advance tail
+        self.tail = (self.tail + 1) % self.max_items
+
+
+    def snapshot(self) -> list[str]:
+        """
+        Returns items in FIFO order (oldest → newest)
+        Does NOT modify buffer.
+        """
+
+        result = []
+
+        for i in range(self.size):
+            index = (self.head + i) % self.max_items
+            result.append(self.buffer[index])
+
+        return result
+
+
+    def clear(self) -> None:
+        """
+        Clears buffer completely.
+        """
+
+        self.buffer = [None] * self.max_items
+        self.head = 0
+        self.tail = 0
+        self.size = 0
+
+
+    def __len__(self) -> int:
+        return self.size
