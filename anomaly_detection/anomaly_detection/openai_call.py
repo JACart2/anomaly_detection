@@ -1,99 +1,92 @@
-"""OpenAI call point for other functions.
+"""OpenAI call point for anomaly detection. Requires cached data from manager.py.
 
 Author: John Rosario Cruz
-Version: 3/3/2025
+Version: 2/18/2026
 """
 from openai import OpenAI
-from io import BytesIO
-from PIL import Image
-import base64
 import os
+from pydantic import BaseModel
+from typing import Literal
 
 
-## REQUIRES dev acc info
-client = OpenAI(
-    api_key=os.environ.get("OA_SECRET")
-)
+## reason is included mostly for debugging. May give hints into the cause of false positives/negatives.
+class AnomalyResponse(BaseModel):
+    anomaly: bool
+    response: Literal["stop_cart", "alert_admin", "none"]
+    reason: str
 
-
-def encode_image(image_tensor):
-    """Take the image tensor (taken from the ZED camera), and base64 encode it so it can be passed to the OpenAI API.
-
-    Args:
-        image_tensor (np matrix): The image matrix.
-
-    Returns:
-        str: the encoded image
-
-    """
-    # Convert the numpy array (image tensor) to a PIL Image
-    image = Image.fromarray(image_tensor)
-
-    # Create a BytesIO object to save the image as bytes
-    buffered = BytesIO()
-    image.save(buffered, format="PNG")  # You can change the format if needed (e.g., JPEG)
-
-    # Get the byte data from the buffer
-    img_byte_array = buffered.getvalue()
-
-    # Encode image to base64
-    img_base64 = base64.b64encode(img_byte_array).decode('utf-8')
-
-    return img_base64
-
-def call_openai(frame):
-    """Calls ChatGPT to make a determination on the image of the person.
+def call_openai(context: str) -> AnomalyResponse:
+    """Calls ChatGPT to make a determination about whether an anomaly is present given cart context.
     
     Args:
-        frame (np.matrix): The image represented by a matrix
+        context (str): String representation of cache log in manager.py. Contains ROS2 messages post-processing (when applicable).
     
     Returns:
-        str: A response from chatGPT (U, I, N, or F)
-            >>> U = Unconscious
-            >>> I = Incapacitated
-            >>> N = Neither
-            >>> F = Failure to identify
+        AnomalyResponse: A response determining if a an anomaly was detected, and the appropriate response.
+            Response is currently defaulting to three messages, may be modified in the future as of 2/17.
+            >>> {
+                "anomaly": bool,
+                "response" : "stop_cart" | "alert_admin" | "none"
+                }
     
     """
-    # Getting the Base64 string
-    base64_image = encode_image(frame)
+    ## REQUIRES dev acc info
+    client = OpenAI(
+        api_key=os.environ.get("OA_SECRET")
+    )
 
-    prompt = f"""
-    You are a camera positioned at the front of a golf cart looking inwards at the passenger. 
-    You are being passed a base64 encoded version of the image that you must decode to analyze.
-    Is the passenger unconscious, incapacitated, or neither. 
-    You must make a determination by analyzing the image. 
-    Return either U, I, or N (unconscious, incapacitated, or neither).
-    If you are incapable of making a determination, return F.
-    Return only a single letter (U, I, N, or F) as a response, dont include extra text.
-    """
+    SYSTEM_PROMPT = f'''
+    You are an anomaly classifier for an autonomous ROS2 golf cart system.
 
-    # ## use this to verify the base64 encoded image works
-    # with open('image_base64.txt', 'w') as f:
-    #     f.write(base64_image)
-    # print("Base64 string written to image_base64.txt")
+    You will receive a single string called CONTEXT containing system logs, passenger data, sensor summaries, or error messages.
+    These logs are coming from anomaly_msg.msg.AnomalyLog, but this doesn't guarantee an anomaly. These are simply consolidated logs for you to make a determination for an anomaly.
 
-    response = client.chat.completions.create(
-        model="chatgpt-4o-latest",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
-                    },
-                ],
-            }
+    Your task:
+    Determine whether there is an anomaly that requires intervention.
+
+    Rules:
+    - If there is NO anomaly, set:
+        "anomaly": false
+        "response": "none"
+        "reason": "your reason"
+
+    - If there is a safety-critical issue (collision risk, incapacitated passenger, control failure, braking failure, obstacle detection failure), return:
+        "anomaly": true
+        "response": "stop_cart"
+        "reason": "your reason"
+
+    - If there is a non-critical but abnormal condition (sensor degradation, unusual passenger behavior, repeated warnings, system errors without immediate danger), return:
+        "anomaly": true
+        "response": "alert_admin"
+        "reason": "your reason"
+
+    '''
+
+    resp = client.responses.parse(
+        model="gpt-5-mini-2025-08-07",
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"CONTEXT:\n{context}"},
         ],
+        text_format=AnomalyResponse,
     )
 
     
-    return response.choices[0]
+    # Depending on SDK version, parsed output is available in one of these places.
+    if getattr(resp, "output_parsed", None) is not None:
+        return resp.output_parsed
+
+    # Fallback: first message content parsed payload
+    return resp.output[0].content[0].parsed
 
 if __name__ == '__main__':
-    pass
+    ## just so no accidental calls, change to true if you are serious about testing
+    call = False
+    payload = "Dummy payload"
+
+    with open("OA_SECRET.txt", "r") as f:
+        os.environ["OA_SECRET"] = f.read().strip()
+
+    if call:
+        response = call_openai(payload)
+        print(response)
