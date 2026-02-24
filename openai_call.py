@@ -9,9 +9,11 @@ from pydantic import BaseModel
 from typing import Literal
 
 
+## reason is included mostly for debugging. May give hints into the cause of false positives/negatives.
 class AnomalyResponse(BaseModel):
     anomaly: bool
     response: Literal["stop_cart", "alert_admin", "none"]
+    reason: str
 
 def call_openai(context: str) -> AnomalyResponse:
     """Calls ChatGPT to make a determination about whether an anomaly is present given cart context.
@@ -37,6 +39,7 @@ def call_openai(context: str) -> AnomalyResponse:
     You are an anomaly classifier for an autonomous ROS2 golf cart system.
 
     You will receive a single string called CONTEXT containing system logs, passenger data, sensor summaries, or error messages.
+    These logs are coming from anomaly_msg.msg.AnomalyLog, but this doesn't guarantee an anomaly. These are simply consolidated logs for you to make a determination for an anomaly.
 
     Your task:
     Determine whether there is an anomaly that requires intervention.
@@ -45,14 +48,17 @@ def call_openai(context: str) -> AnomalyResponse:
     - If there is NO anomaly, set:
         "anomaly": false
         "response": "none"
+        "reason": "your reason"
 
     - If there is a safety-critical issue (collision risk, incapacitated passenger, control failure, braking failure, obstacle detection failure), return:
         "anomaly": true
         "response": "stop_cart"
+        "reason": "your reason"
 
     - If there is a non-critical but abnormal condition (sensor degradation, unusual passenger behavior, repeated warnings, system errors without immediate danger), return:
         "anomaly": true
         "response": "alert_admin"
+        "reason": "your reason"
 
     '''
 
@@ -76,7 +82,7 @@ def call_openai(context: str) -> AnomalyResponse:
 if __name__ == '__main__':
     ## just so no accidental calls, change to true if you are serious about testing
     call = False
-    payload = "dummy payload"
+    payload = "Dummy payload"
 
     with open("OA_SECRET.txt", "r") as f:
         os.environ["OA_SECRET"] = f.read().strip()
@@ -84,9 +90,3 @@ if __name__ == '__main__':
     if call:
         response = call_openai(payload)
         print(response)
-    
-
-    
-    
-
-    
