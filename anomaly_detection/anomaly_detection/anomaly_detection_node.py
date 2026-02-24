@@ -1,6 +1,8 @@
 import os
 import yaml
 import json
+from datetime import datetime
+
 
 import rclpy
 from rclpy.node import Node
@@ -97,10 +99,13 @@ class AnomalyDetectionNode(Node):
             return
             
         full_payload = "".join(raw_list) 
+
+
         # Process the messages with your LLM logic here
         self.get_logger().info(
             f"Processing {len(self.queue.buffer)} anomaly messages..."
         )
+
         self.queue.clear()
 
 
