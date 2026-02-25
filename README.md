@@ -31,4 +31,3 @@ Running this command:
 will start the anomaly detection node.
 
 However, note the dependencies in prerequisites, and the specifications of `./anomaly_detection/anomaly_detection/config.yaml` for successful deloyment.
-
