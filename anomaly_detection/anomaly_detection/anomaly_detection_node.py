@@ -5,7 +5,7 @@ import json
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from anomaly_msg.msg import AnomalyLog
+from anomaly_msg.msg import AnomalyMsg
 
 from anomaly_detection.StringRingBuffer import StringRingBuffer
 
@@ -39,7 +39,7 @@ class AnomalyDetectionNode(Node):
 
         # Create subscription for raw input
         self.subscription = self.create_subscription(
-            AnomalyLog,
+            AnomalyMsg,
             self.raw_input_topic,
             self.log_caching_callback,
             10

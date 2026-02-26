@@ -12,8 +12,8 @@
   <exec_depend>rosidl_default_runtime</exec_depend>
 
   <depend>std_msgs</depend>
-  <depend>sensor_msgs</depends>
-  <depend>built_interfaces</depends>
+  <depend>sensor_msgs</depend>
+  <depend>built_interfaces</depend>
 
   <!-- Jazzy requirement for message packages -->
   <member_of_group>rosidl_interface_packages</member_of_group>
