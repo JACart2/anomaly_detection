@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from anomaly_msg.msg import AnomalyLog
+from anomaly_msg.msg import AnomalyMsg
 import random
 
 
