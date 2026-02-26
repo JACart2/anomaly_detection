@@ -24,6 +24,15 @@ This provides two utility nodes: `fake_camera_data` and `lidar_test_node`. Both 
 This is the ROS2 node declaration for the anomaly detection system. The logic is located under `./anomaly_detection/anomaly_detection`. `anomaly_detection_node.py` contains the manager that will handle API integration, data subscription, data processing, and subsequent action for the system to take if anomalies are detected. `config.yaml` contains system configuration for the system. `openai_call.py` is the current API integration, but this will change after this sprint.
 
 
+## System Diagrams
+
+### Architecture Diagram
+![Architecture Diagram](docs/cs480_sprint1_arch_diagram_alt.jpeg)
+
+### Dataflow Digram
+![Dataflow Diagram](docs/cs480_sprint1_dataflow_diagram.jpeg)
+
+
 ## Usage
 
 Running this command: 
