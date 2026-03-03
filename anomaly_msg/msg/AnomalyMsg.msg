@@ -1,16 +1,23 @@
 # AnomalyMsg.msg
 std_msgs/Header header 	    # holds stamp and frame ID
 
-string publisher_name	    # name of file publishing
-string source_type          # camera, lidar, mic, etc. 
-string sensor_info	    # e.g. sensor location, confidence etc. 
-string topic_name           # original topic name
-string data_type            # string, wav2, etc.
+string node_name            # name of the publishing node
 
-sensor_msgs/Image image     # image
-string description	    # relevant text data
+uint8 INFO=0
+uint8 WARNING=1
+uint8 ERROR=2
+uint8 importance            # either info, warning, or error
 
-uint8[] data                # catch all
+uint8 TEXT=0
+uint8 IMAGE=1
+uint8 DATA=2
+uint8 type                  # either text, image, or data
 
+string msg                  # type 0
+
+sensor_msgs/Image image     # type 1
+
+string data_type            # type 2
+uint8[] data
 
 

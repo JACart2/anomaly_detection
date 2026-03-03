@@ -3,6 +3,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from anomaly_msg.msg import AnomalyMsg
 
+
 class CameraAnomalyPublisher(Node):
     def __init__(self):
         super().__init__('camera_anomaly_node')
@@ -10,7 +11,7 @@ class CameraAnomalyPublisher(Node):
         # Subscriber to the real camera topic
         self.camera_sub = self.create_subscription(
             Image,
-            '/camera/image_raw',  # Replace with your camera topic
+            '/camera/image_raw',
             self.camera_callback,
             10
         )
@@ -23,32 +24,30 @@ class CameraAnomalyPublisher(Node):
         )
 
     def camera_callback(self, img_msg: Image):
-        # Create an AnomalyMsg
         anomaly = AnomalyMsg()
 
-        # Copy the header from the camera image
-        anomaly.header.stamp = img_msg.header.stamp
-        anomaly.header.frame_id = img_msg.header.frame_id  # sensor frame
+        # Copy header from image
+        anomaly.header = img_msg.header
 
-        # Metadata
-        anomaly.publisher_name = self.get_name()
-        anomaly.source_type = "camera"
-        anomaly.sensor_info = "front_camera"
-        anomaly.topic_name = '/camera/image_raw'
-        anomaly.data_type = "sensor_msgs/Image"
+        # Required metadata
+        anomaly.node_name = self.get_name()
+        anomaly.importance = AnomalyMsg.INFO   # INFO level
+        anomaly.type = AnomalyMsg.IMAGE        # IMAGE type
 
-        # Human-readable description
-        anomaly.description = "This is the image from the front camera"
+        # Message text (used even for image context description)
+        anomaly.msg = "Front camera image received"
 
-        # Attach the real image
+        # Attach image (since type = IMAGE)
         anomaly.image = img_msg
 
-        # Leave raw data empty since we are sending structured Image
+        # Not used for IMAGE type
+        anomaly.data_type = ""
         anomaly.data = []
 
-        # Publish the anomaly
+        # Publish
         self.anomaly_pub.publish(anomaly)
         self.get_logger().info("Published anomaly with image")
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -56,6 +55,7 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()
