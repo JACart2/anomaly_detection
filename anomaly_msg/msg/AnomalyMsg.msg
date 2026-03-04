@@ -1,7 +1,6 @@
 # AnomalyMsg.msg
-std_msgs/Header header 	    # holds stamp and frame ID
-
-string node_name            # name of the publishing node
+std_msgs/Header header 	    # timestamp and frame reference
+string node_name            # name of publishing node
 
 uint8 INFO=0
 uint8 WARNING=1
@@ -11,13 +10,13 @@ uint8 importance            # either info, warning, or error
 uint8 TEXT=0
 uint8 IMAGE=1
 uint8 DATA=2
-uint8 type                  # either text, image, or data
+uint8 type                  # either text, image (+ optional msg) or data (+ optional msg)
 
-string msg                  # type 0
+string msg                  # may be accompanied by any type
 
-sensor_msgs/Image image     # type 1
+sensor_msgs/Image image     # used when type == IMAGE
 
-string data_type            # type 2
+string data_type            # used when type == DATA
 uint8[] data
 
 
