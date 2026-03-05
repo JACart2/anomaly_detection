@@ -18,7 +18,7 @@ import threading
 from queue import Queue
 
 ## Facial Expression Recognition (see README)
-from fer import FER
+from fer.fer import FER
 
 ## Utility
 import re
@@ -89,7 +89,7 @@ class EmotionRecognition(Node):
         # subscription
         self.subscription = self.create_subscription(
             Image,
-            '/zed_rear/zed_node_1/left_raw/image_raw_color', 
+            '/zed_rear/zed_node_1/rgb/color/rect/image', 
             self.listener_callback,
             10
         )

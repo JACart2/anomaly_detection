@@ -1,4 +1,4 @@
 #!/bin/bash
 
 # Install dependencies for the buffer model
-pip install -r requirements.txt
+pip install -r requirements.txt --break-system-packages
