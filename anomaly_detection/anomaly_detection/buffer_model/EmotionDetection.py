@@ -140,7 +140,6 @@ class EmotionRecognition(Node):
                 ## alternating between threads
                 if not self.frame_queue.full():
                     self.frame_queue.put(rgb_image)
-
                 should_monitor = False
                 with self._emotion_lock:
                     if len(self.emotion_data) >= 30:
