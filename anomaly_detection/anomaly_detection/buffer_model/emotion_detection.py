@@ -1,9 +1,7 @@
-"""Emotion Recognition of input video feed using multi-threading.
+"""Emotion Recognition of input video feed. Buffer model for AI Anomaly Detection (https://github.com/JACart2/anomaly_detection)
 
 Author: John Rosario Cruz
-Based off "Facial-Recognition" by: Donghao Liu
-Based off "FaceRec_Emotion" by: Dominic Nguyen
-Version: 4/24/2025
+Version: 3/5/2026
 """
 ## ROS2 packages
 import rclpy
@@ -56,9 +54,9 @@ class EmotionRecognition(Node):
         thread_process (thread): The primary thread for processing. This method
             uses process_frames().
 
-        emotion_lock (threading.Lock): A lock for managing access to the emotion_data list.
+        _emotion_lock (threading.Lock): A lock for managing access to the emotion_data list.
 
-        anomaly_lock (threading.Lock): A lock for managing access to the
+        _anomaly_lock (threading.Lock): A lock for managing access to the
 
         anomaly_message (str): The message that is sent to the backend if an anomaly is detected. This is monitored by the main loop of the backend and triggers a response if not empty.
 
@@ -137,7 +135,7 @@ class EmotionRecognition(Node):
                 ## manual image flip until ROS2 topic does this
                 #rgb_image = cv2.flip(rgb_image, 0)
 
-                ## alternating between threads
+                ## update queue in thread safe way
                 if not self.frame_queue.full():
                     self.frame_queue.put(rgb_image)
                 should_monitor = False
@@ -192,7 +190,7 @@ class EmotionRecognition(Node):
         if average_confidence >= 50:
             if top_emotion in ["fear", "sad", "surprise", "angry", "disgust"]:
                 ## returning because something is bad
-                self._set_anomaly_message("uhoh")
+                self._set_anomaly_message("UHOH emotion_detection found something bad!")
 
     def process_frames(self) -> None:
         """Primary thread for processing frames from frame queue from main.
