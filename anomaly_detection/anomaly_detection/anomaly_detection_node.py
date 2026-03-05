@@ -1,8 +1,7 @@
 import os
 import yaml
 import json
-from datetime import datetime
-
+import subprocess
 
 import rclpy
 from rclpy.node import Node
@@ -18,6 +17,9 @@ class AnomalyDetectionNode(Node):
 
         # Load config once on startup
         self.config = self._load_config()
+
+        # Determine if buffer model is enabled (default to False if not specified)
+        self.buffer_model_enabled = self.config.get("buffer_model", False)
 
         # Sprint-required timing variables (with safe defaults)
         self.artifact_frequency_seconds = self.config.get("artifact_frequency_seconds", 30)
@@ -35,6 +37,9 @@ class AnomalyDetectionNode(Node):
             f"api_frequency_seconds={self.api_frequency_seconds}"
         )
 
+        if (self.buffer_model_enabled):
+            self.get_logger().info("Buffer model enabled. Running install.sh")
+            self._run_buffer_model_install()
 
         # Need to change so it used config #####
         self.queue = StringRingBuffer(max_items=100)
@@ -52,6 +57,21 @@ class AnomalyDetectionNode(Node):
         # Simple message counter for debugging
         self._msg_count = 0
         self.get_logger().info("Anomaly Detection node started.")
+
+    def _run_buffer_model_install(self) -> None:
+        """
+        Run buffer model installation (from __init__). Assumes install.sh is in the buffer_model subfolder and is executable.
+        """
+        script_path = os.path.join(os.path.dirname(__file__), "buffer_model", "install.sh")
+        if not os.path.isfile(script_path):
+            self.get_logger().error(f"install.sh not found at {script_path}")
+            return
+
+        try:
+            subprocess.run(["bash", script_path], cwd=os.path.dirname(script_path), check=True)
+            self.get_logger().info("install.sh completed.")
+        except subprocess.CalledProcessError as e:
+            self.get_logger().error(f"install.sh failed: {e}")
 
     def _load_config(self) -> dict:
         """

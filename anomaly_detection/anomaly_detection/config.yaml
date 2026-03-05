@@ -9,6 +9,7 @@ cache_max_size: 100 #Placeholder value for now cause Sprauge said so, blame late
 cache_max_age_seconds: = 30
 
 raw_input_topic: "/ai_anomaly_logging" #Update it to match github
+buffer_model: False
 #trimmed_output_topic: "/add/trimmed_data" #Update to match github
 
 
