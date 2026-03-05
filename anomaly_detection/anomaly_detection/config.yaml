@@ -5,12 +5,13 @@ artifact_frequency_seconds: 30
 artifact_duration_seconds: 10
 api_frequency_seconds: 60
 
-cache_max_size: 100 #Placeholder value for now cause Sprauge said so, blame later
-cache_max_age_seconds: = 30
+cache_max_items: 100
+cache_max_age_seconds: 30
 
-raw_input_topic: "/ai_anomaly_logging" #Update it to match github
-#trimmed_output_topic: "/add/trimmed_data" #Update to match github
+raw_input_topic: "/ai_anomaly_logging"
+alert_topic: "/aad/alerts"
 
+throttle_info: true
+info_min_period_sec: 1.0
 
-
-
+log_every_n_msgs: 50
