@@ -2,10 +2,12 @@ import os
 import yaml
 import json
 import subprocess
+import threading
+import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from rclpy.executors import MultiThreadedExecutor
 from anomaly_msg.msg import AnomalyLog
 
 from anomaly_detection.StringRingBuffer import StringRingBuffer
@@ -52,11 +54,46 @@ class AnomalyDetectionNode(Node):
             10
         )
 
+        if (self.buffer_model_enabled):
+            self._start_buffer_model()
+
         self.timer = self.create_timer(self.api_frequency_seconds, self.llm_callback)
 
         # Simple message counter for debugging
         self._msg_count = 0
         self.get_logger().info("Anomaly Detection node started.")
+
+    def _start_buffer_model(self) -> None:
+        try:
+            from anomaly_detection.anomaly_detection.anomaly_detection.buffer_model.buffer_model import BufferModel
+        except Exception as e:
+            self.get_logger().error(f"Failed to import BufferModel: {e}")
+            return
+
+        self.buffer_model_node = BufferModel()
+        self._buffer_model_monitor_stop = threading.Event()
+        self._buffer_model_monitor_thread = threading.Thread(
+            target=self._monitor_buffer_model_anomalies,
+            daemon=True,
+        )
+        self._buffer_model_monitor_thread.start()
+
+    def _monitor_buffer_model_anomalies(self) -> None:
+        poll_seconds = 0.2
+        while not self._buffer_model_monitor_stop.is_set():
+            msg = self.buffer_model_node.consume_anomaly_message()
+            if msg:
+                self.queue.add(msg)
+                self.llm_callback()
+            else:
+                time.sleep(poll_seconds)
+
+    def _stop_buffer_model(self) -> None:
+        if hasattr(self, "_buffer_model_monitor_stop"):
+            self._buffer_model_monitor_stop.set()
+        if hasattr(self, "_buffer_model_monitor_thread"):
+            if self._buffer_model_monitor_thread.is_alive():
+                self._buffer_model_monitor_thread.join(timeout=1.0)
 
     def _run_buffer_model_install(self) -> None:
         """
@@ -118,9 +155,6 @@ class AnomalyDetectionNode(Node):
             self.get_logger().info("No anomaly messages received yet.")
             return
             
-        full_payload = "".join(raw_list) 
-
-
         # Process the messages with your LLM logic here
         self.get_logger().info(
             f"Processing {len(self.queue.buffer)} anomaly messages..."
@@ -132,13 +166,22 @@ class AnomalyDetectionNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = AnomalyDetectionNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    if hasattr(node, "buffer_model_node"):
+        executor.add_node(node.buffer_model_node)
 
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        node._stop_buffer_model()
+        if hasattr(node, "buffer_model_node"):
+            node.buffer_model_node.stop_event.set()
+            node.buffer_model_node.destroy_node()
         node.destroy_node()
+        executor.shutdown()
         rclpy.shutdown()
 
 

@@ -1,7 +1,7 @@
 """Emotion Recognition of input video feed. Buffer model for AI Anomaly Detection (https://github.com/JACart2/anomaly_detection)
 
 Author: John Rosario Cruz
-Version: 3/5/2026
+Version: 3/9/2026
 """
 ## ROS2 packages
 import rclpy
@@ -22,7 +22,7 @@ from fer.fer import FER
 import re
 import time
 
-class EmotionRecognition(Node):
+class BufferModel(Node):
     """
     Description
     ------------
@@ -247,17 +247,17 @@ def main() -> None:
     ## waiting for backend service to spin up their topic
     time.sleep(20)
     rclpy.init()
-    emotion_node = EmotionRecognition()
+    buffer_model_node = BufferModel()
 
     try:
-        rclpy.spin(emotion_node)
+        rclpy.spin(buffer_model_node)
     except KeyboardInterrupt:
         pass
     finally:
         ## ending threads, ending listener_callback() functionality
-        emotion_node.stop_event.set()
-        emotion_node.thread_process.join()
-        emotion_node.destroy_node()
+        buffer_model_node.stop_event.set()
+        buffer_model_node.thread_process.join()
+        buffer_model_node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':
