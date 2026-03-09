@@ -65,7 +65,7 @@ class AnomalyDetectionNode(Node):
 
     def _start_buffer_model(self) -> None:
         try:
-            from anomaly_detection.anomaly_detection.anomaly_detection.buffer_model.buffer_model import BufferModel
+            from anomaly_detection.buffer_model.buffer_model import BufferModel
         except Exception as e:
             self.get_logger().error(f"Failed to import BufferModel: {e}")
             return
