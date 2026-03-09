@@ -190,7 +190,7 @@ class BufferModel(Node):
         if average_confidence >= 50:
             if top_emotion in ["fear", "sad", "surprise", "angry", "disgust"]:
                 ## returning because something is bad
-                self._set_anomaly_message("UHOH emotion_detection found something bad!")
+                self._set_anomaly_message(f"Local model claims passenger is experiencing {top_emotion} at a {average_confidence}% confidence")
 
     def process_frames(self) -> None:
         """Primary thread for processing frames from frame queue from main.
