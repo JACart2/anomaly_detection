@@ -7,7 +7,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from anomaly_msg.msg import AnomalyMsg
+from anomaly_msg.msg import AnomalyLog
 from anomaly_detection.openai_call import call_openai
 from anomaly_detection.response_handler import parse_llm_response
 from anomaly_detection.StringRingBuffer import StringRingBuffer
