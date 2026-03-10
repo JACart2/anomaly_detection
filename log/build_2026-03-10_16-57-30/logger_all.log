@@ -1,0 +1,245 @@
+[0.079s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build']
+[0.079s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=False, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=16, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=None, packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, mixin_files=None, mixin=None, verb_parser=<colcon_mixin.mixin.mixin_argument.MixinArgumentDecorator object at 0x7ad1ee784890>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0x7ad1ee784560>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0x7ad1ee784560>>, mixin_verb=('build',))
+[0.105s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.105s] INFO:colcon.colcon_metadata.package_discovery.colcon_meta:Using configuration from '/root/.colcon/metadata/default/Gazebo.meta'
+[0.106s] INFO:colcon.colcon_metadata.package_discovery.colcon_meta:Using configuration from '/root/.colcon/metadata/default/fastdds.meta'
+[0.106s] INFO:colcon.colcon_metadata.package_discovery.colcon_meta:Using configuration from '/root/.colcon/metadata/default/fastrtps.meta'
+[0.106s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.106s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.106s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.106s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.106s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.106s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/root/dev_ws/src/anomaly_detection'
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.106s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.107s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.107s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['cmake', 'python']
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'cmake'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['python_setup_py']
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python_setup_py'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extensions ['ignore', 'ignore_ament_install']
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extension 'ignore'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extension 'ignore_ament_install'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extensions ['colcon_pkg']
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extension 'colcon_pkg'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extensions ['colcon_meta']
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extension 'colcon_meta'
+[0.124s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extensions ['ros']
+[0.125s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_detection) by extension 'ros'
+[0.126s] DEBUG:colcon.colcon_core.package_identification:Package 'anomaly_detection' with type 'ros.ament_python' and name 'anomaly_detection'
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extensions ['ignore', 'ignore_ament_install']
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extension 'ignore'
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extension 'ignore_ament_install'
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extensions ['colcon_pkg']
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extension 'colcon_pkg'
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extensions ['colcon_meta']
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extension 'colcon_meta'
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extensions ['ros']
+[0.126s] Level 1:colcon.colcon_core.package_identification:_identify(anomaly_msg) by extension 'ros'
+[0.127s] DEBUG:colcon.colcon_core.package_identification:Package 'anomaly_msg' with type 'ros.ament_cmake' and name 'anomaly_msg'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extensions ['ignore', 'ignore_ament_install']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extension 'ignore'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(build) ignored
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extensions ['ignore', 'ignore_ament_install']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extension 'ignore'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(install) ignored
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extensions ['ignore', 'ignore_ament_install']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extension 'ignore'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(log) ignored
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extensions ['ignore', 'ignore_ament_install']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extension 'ignore'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extension 'ignore_ament_install'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extensions ['colcon_pkg']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extension 'colcon_pkg'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extensions ['colcon_meta']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extension 'colcon_meta'
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extensions ['ros']
+[0.127s] Level 1:colcon.colcon_core.package_identification:_identify(tester) by extension 'ros'
+[0.127s] DEBUG:colcon.colcon_core.package_identification:Package 'tester' with type 'ros.ament_python' and name 'tester'
+[0.127s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.127s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.127s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.127s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.128s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'cmake_args' from command line to 'None'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'cmake_target' from command line to 'None'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'cmake_clean_cache' from command line to 'False'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'cmake_clean_first' from command line to 'False'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'cmake_force_configure' from command line to 'False'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'ament_cmake_args' from command line to 'None'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'catkin_cmake_args' from command line to 'None'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_msg' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.140s] DEBUG:colcon.colcon_core.verb:Building package 'anomaly_msg' with the following arguments: {'ament_cmake_args': None, 'build_base': '/root/dev_ws/src/anomaly_detection/build/anomaly_msg', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/root/dev_ws/src/anomaly_detection/install/anomaly_msg', 'merge_install': False, 'path': '/root/dev_ws/src/anomaly_detection/anomaly_msg', 'symlink_install': False, 'test_result_base': None}
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'cmake_args' from command line to 'None'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'cmake_target' from command line to 'None'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'cmake_clean_cache' from command line to 'False'
+[0.140s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'cmake_clean_first' from command line to 'False'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'cmake_force_configure' from command line to 'False'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'ament_cmake_args' from command line to 'None'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'catkin_cmake_args' from command line to 'None'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'anomaly_detection' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.141s] DEBUG:colcon.colcon_core.verb:Building package 'anomaly_detection' with the following arguments: {'ament_cmake_args': None, 'build_base': '/root/dev_ws/src/anomaly_detection/build/anomaly_detection', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/root/dev_ws/src/anomaly_detection/install/anomaly_detection', 'merge_install': False, 'path': '/root/dev_ws/src/anomaly_detection/anomaly_detection', 'symlink_install': False, 'test_result_base': None}
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'cmake_args' from command line to 'None'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'cmake_target' from command line to 'None'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'cmake_clean_cache' from command line to 'False'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'cmake_clean_first' from command line to 'False'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'cmake_force_configure' from command line to 'False'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'ament_cmake_args' from command line to 'None'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'catkin_cmake_args' from command line to 'None'
+[0.141s] Level 5:colcon.colcon_core.verb:set package 'tester' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.141s] DEBUG:colcon.colcon_core.verb:Building package 'tester' with the following arguments: {'ament_cmake_args': None, 'build_base': '/root/dev_ws/src/anomaly_detection/build/tester', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/root/dev_ws/src/anomaly_detection/install/tester', 'merge_install': False, 'path': '/root/dev_ws/src/anomaly_detection/tester', 'symlink_install': False, 'test_result_base': None}
+[0.141s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[0.141s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[0.142s] INFO:colcon.colcon_ros.task.ament_cmake.build:Building ROS package in '/root/dev_ws/src/anomaly_detection/anomaly_msg' with build type 'ament_cmake'
+[0.142s] INFO:colcon.colcon_cmake.task.cmake.build:Building CMake package in '/root/dev_ws/src/anomaly_detection/anomaly_msg'
+[0.143s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.143s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.143s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[0.150s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/root/dev_ws/src/anomaly_detection/build/anomaly_msg': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/root/dev_ws/install/tester:/root/dev_ws/install/teleop:/root/dev_ws/install/navigation:/root/dev_ws/install/motor_control:/root/dev_ws/install/localization_launch:/root/dev_ws/install/jacart_warmup:/root/dev_ws/install/cart_launch:/root/dev_ws/install/anomaly_detection:/opt/ros_ws/install/tester:/opt/ros_ws/install/teleop:/opt/ros_ws/install/navigation:/opt/ros_ws/install/motor_control:/opt/ros_ws/install/localization_launch:/opt/ros_ws/install/jacart_warmup:/opt/ros_ws/install/cart_launch:/opt/ros_ws/install/anomaly_detection:/opt/ros/jazzy /usr/bin/cmake /root/dev_ws/src/anomaly_detection/anomaly_msg -DCMAKE_INSTALL_PREFIX=/root/dev_ws/src/anomaly_detection/install/anomaly_msg
+[2.377s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/root/dev_ws/src/anomaly_detection/build/anomaly_msg' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/root/dev_ws/install/tester:/root/dev_ws/install/teleop:/root/dev_ws/install/navigation:/root/dev_ws/install/motor_control:/root/dev_ws/install/localization_launch:/root/dev_ws/install/jacart_warmup:/root/dev_ws/install/cart_launch:/root/dev_ws/install/anomaly_detection:/opt/ros_ws/install/tester:/opt/ros_ws/install/teleop:/opt/ros_ws/install/navigation:/opt/ros_ws/install/motor_control:/opt/ros_ws/install/localization_launch:/opt/ros_ws/install/jacart_warmup:/opt/ros_ws/install/cart_launch:/opt/ros_ws/install/anomaly_detection:/opt/ros/jazzy /usr/bin/cmake /root/dev_ws/src/anomaly_detection/anomaly_msg -DCMAKE_INSTALL_PREFIX=/root/dev_ws/src/anomaly_detection/install/anomaly_msg
+[2.377s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/root/dev_ws/src/anomaly_detection/build/anomaly_msg': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/root/dev_ws/install/tester:/root/dev_ws/install/teleop:/root/dev_ws/install/navigation:/root/dev_ws/install/motor_control:/root/dev_ws/install/localization_launch:/root/dev_ws/install/jacart_warmup:/root/dev_ws/install/cart_launch:/root/dev_ws/install/anomaly_detection:/opt/ros_ws/install/tester:/opt/ros_ws/install/teleop:/opt/ros_ws/install/navigation:/opt/ros_ws/install/motor_control:/opt/ros_ws/install/localization_launch:/opt/ros_ws/install/jacart_warmup:/opt/ros_ws/install/cart_launch:/opt/ros_ws/install/anomaly_detection:/opt/ros/jazzy /usr/bin/cmake --build /root/dev_ws/src/anomaly_detection/build/anomaly_msg -- -j16 -l16
+[3.968s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/root/dev_ws/src/anomaly_detection/build/anomaly_msg' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/root/dev_ws/install/tester:/root/dev_ws/install/teleop:/root/dev_ws/install/navigation:/root/dev_ws/install/motor_control:/root/dev_ws/install/localization_launch:/root/dev_ws/install/jacart_warmup:/root/dev_ws/install/cart_launch:/root/dev_ws/install/anomaly_detection:/opt/ros_ws/install/tester:/opt/ros_ws/install/teleop:/opt/ros_ws/install/navigation:/opt/ros_ws/install/motor_control:/opt/ros_ws/install/localization_launch:/opt/ros_ws/install/jacart_warmup:/opt/ros_ws/install/cart_launch:/opt/ros_ws/install/anomaly_detection:/opt/ros/jazzy /usr/bin/cmake --build /root/dev_ws/src/anomaly_detection/build/anomaly_msg -- -j16 -l16
+[3.975s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/root/dev_ws/src/anomaly_detection/build/anomaly_msg': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/root/dev_ws/install/tester:/root/dev_ws/install/teleop:/root/dev_ws/install/navigation:/root/dev_ws/install/motor_control:/root/dev_ws/install/localization_launch:/root/dev_ws/install/jacart_warmup:/root/dev_ws/install/cart_launch:/root/dev_ws/install/anomaly_detection:/opt/ros_ws/install/tester:/opt/ros_ws/install/teleop:/opt/ros_ws/install/navigation:/opt/ros_ws/install/motor_control:/opt/ros_ws/install/localization_launch:/opt/ros_ws/install/jacart_warmup:/opt/ros_ws/install/cart_launch:/opt/ros_ws/install/anomaly_detection:/opt/ros/jazzy /usr/bin/cmake --install /root/dev_ws/src/anomaly_detection/build/anomaly_msg
+[4.026s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(anomaly_msg)
+[4.026s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/root/dev_ws/src/anomaly_detection/build/anomaly_msg' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/root/dev_ws/install/tester:/root/dev_ws/install/teleop:/root/dev_ws/install/navigation:/root/dev_ws/install/motor_control:/root/dev_ws/install/localization_launch:/root/dev_ws/install/jacart_warmup:/root/dev_ws/install/cart_launch:/root/dev_ws/install/anomaly_detection:/opt/ros_ws/install/tester:/opt/ros_ws/install/teleop:/opt/ros_ws/install/navigation:/opt/ros_ws/install/motor_control:/opt/ros_ws/install/localization_launch:/opt/ros_ws/install/jacart_warmup:/opt/ros_ws/install/cart_launch:/opt/ros_ws/install/anomaly_detection:/opt/ros/jazzy /usr/bin/cmake --install /root/dev_ws/src/anomaly_detection/build/anomaly_msg
+[4.028s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg' for CMake module files
+[4.028s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg' for CMake config files
+[4.029s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_msg', 'cmake_prefix_path')
+[4.029s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/cmake_prefix_path.ps1'
+[4.029s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/cmake_prefix_path.dsv'
+[4.029s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/cmake_prefix_path.sh'
+[4.030s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib'
+[4.030s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_msg', 'ld_library_path_lib')
+[4.030s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/ld_library_path_lib.ps1'
+[4.030s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/ld_library_path_lib.dsv'
+[4.030s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/ld_library_path_lib.sh'
+[4.031s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/bin'
+[4.031s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/pkgconfig/anomaly_msg.pc'
+[4.032s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages'
+[4.032s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_msg', 'pythonpath')
+[4.032s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/pythonpath.ps1'
+[4.033s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/pythonpath.dsv'
+[4.033s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/pythonpath.sh'
+[4.033s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/bin'
+[4.033s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.ps1'
+[4.034s] INFO:colcon.colcon_core.shell:Creating package descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.dsv'
+[4.034s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.sh'
+[4.035s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.bash'
+[4.035s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.zsh'
+[4.035s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/colcon-core/packages/anomaly_msg)
+[4.036s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(anomaly_msg)
+[4.036s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg' for CMake module files
+[4.036s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg' for CMake config files
+[4.036s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_msg', 'cmake_prefix_path')
+[4.036s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/cmake_prefix_path.ps1'
+[4.037s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/cmake_prefix_path.dsv'
+[4.037s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/cmake_prefix_path.sh'
+[4.037s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib'
+[4.037s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_msg', 'ld_library_path_lib')
+[4.037s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/ld_library_path_lib.ps1'
+[4.037s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/ld_library_path_lib.dsv'
+[4.037s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/ld_library_path_lib.sh'
+[4.038s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/bin'
+[4.038s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/pkgconfig/anomaly_msg.pc'
+[4.038s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages'
+[4.038s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_msg', 'pythonpath')
+[4.038s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/pythonpath.ps1'
+[4.038s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/pythonpath.dsv'
+[4.038s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/hook/pythonpath.sh'
+[4.039s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/bin'
+[4.039s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.ps1'
+[4.039s] INFO:colcon.colcon_core.shell:Creating package descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.dsv'
+[4.040s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.sh'
+[4.040s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.bash'
+[4.040s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/anomaly_msg/package.zsh'
+[4.040s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/root/dev_ws/src/anomaly_detection/install/anomaly_msg/share/colcon-core/packages/anomaly_msg)
+[4.041s] INFO:colcon.colcon_ros.task.ament_python.build:Building ROS package in '/root/dev_ws/src/anomaly_detection/anomaly_detection' with build type 'ament_python'
+[4.041s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_detection', 'ament_prefix_path')
+[4.041s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/hook/ament_prefix_path.ps1'
+[4.041s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/hook/ament_prefix_path.dsv'
+[4.042s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/hook/ament_prefix_path.sh'
+[4.042s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.042s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[4.045s] INFO:colcon.colcon_ros.task.ament_python.build:Building ROS package in '/root/dev_ws/src/anomaly_detection/tester' with build type 'ament_python'
+[4.045s] Level 1:colcon.colcon_core.shell:create_environment_hook('tester', 'ament_prefix_path')
+[4.045s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/hook/ament_prefix_path.ps1'
+[4.046s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/hook/ament_prefix_path.dsv'
+[4.046s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/hook/ament_prefix_path.sh'
+[4.046s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.046s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[4.194s] INFO:colcon.colcon_core.task.python.build:Building Python package in '/root/dev_ws/src/anomaly_detection/anomaly_detection'
+[4.194s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.194s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[4.337s] INFO:colcon.colcon_core.task.python.build:Building Python package in '/root/dev_ws/src/anomaly_detection/tester'
+[4.338s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.338s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[4.716s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/root/dev_ws/src/anomaly_detection/tester': AMENT_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${CMAKE_PREFIX_PATH} LD_LIBRARY_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib:${LD_LIBRARY_PATH} PYTHONPATH=/root/dev_ws/src/anomaly_detection/build/tester/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/dev_ws/src/anomaly_detection/install/tester/lib/python3.12/site-packages:/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/tester build --build-base /root/dev_ws/src/anomaly_detection/build/tester/build install --record /root/dev_ws/src/anomaly_detection/build/tester/install.log --single-version-externally-managed install_data
+[4.717s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/root/dev_ws/src/anomaly_detection/anomaly_detection': AMENT_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${CMAKE_PREFIX_PATH} LD_LIBRARY_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib:${LD_LIBRARY_PATH} PYTHONPATH=/root/dev_ws/src/anomaly_detection/build/anomaly_detection/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages:/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/anomaly_detection build --build-base /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build install --record /root/dev_ws/src/anomaly_detection/build/anomaly_detection/install.log --single-version-externally-managed install_data
+[5.067s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester' for CMake module files
+[5.067s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/root/dev_ws/src/anomaly_detection/tester' returned '0': AMENT_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${CMAKE_PREFIX_PATH} LD_LIBRARY_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib:${LD_LIBRARY_PATH} PYTHONPATH=/root/dev_ws/src/anomaly_detection/build/tester/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/dev_ws/src/anomaly_detection/install/tester/lib/python3.12/site-packages:/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/tester build --build-base /root/dev_ws/src/anomaly_detection/build/tester/build install --record /root/dev_ws/src/anomaly_detection/build/tester/install.log --single-version-externally-managed install_data
+[5.068s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester' for CMake config files
+[5.068s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester/lib'
+[5.068s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester/bin'
+[5.068s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester/lib/pkgconfig/tester.pc'
+[5.068s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester/lib/python3.12/site-packages'
+[5.068s] Level 1:colcon.colcon_core.shell:create_environment_hook('tester', 'pythonpath')
+[5.068s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/hook/pythonpath.ps1'
+[5.069s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/hook/pythonpath.dsv'
+[5.069s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/hook/pythonpath.sh'
+[5.069s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/tester/bin'
+[5.069s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(tester)
+[5.070s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/package.ps1'
+[5.070s] INFO:colcon.colcon_core.shell:Creating package descriptor '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/package.dsv'
+[5.070s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/package.sh'
+[5.071s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/package.bash'
+[5.071s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/tester/share/tester/package.zsh'
+[5.071s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/root/dev_ws/src/anomaly_detection/install/tester/share/colcon-core/packages/tester)
+[5.072s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection' for CMake module files
+[5.072s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/root/dev_ws/src/anomaly_detection/anomaly_detection' returned '0': AMENT_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${CMAKE_PREFIX_PATH} LD_LIBRARY_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib:${LD_LIBRARY_PATH} PYTHONPATH=/root/dev_ws/src/anomaly_detection/build/anomaly_detection/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages:/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/anomaly_detection build --build-base /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build install --record /root/dev_ws/src/anomaly_detection/build/anomaly_detection/install.log --single-version-externally-managed install_data
+[5.073s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection' for CMake config files
+[5.073s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib'
+[5.073s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/bin'
+[5.073s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/pkgconfig/anomaly_detection.pc'
+[5.073s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages'
+[5.073s] Level 1:colcon.colcon_core.shell:create_environment_hook('anomaly_detection', 'pythonpath')
+[5.073s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/hook/pythonpath.ps1'
+[5.073s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/hook/pythonpath.dsv'
+[5.074s] INFO:colcon.colcon_core.shell:Creating environment hook '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/hook/pythonpath.sh'
+[5.074s] Level 1:colcon.colcon_core.environment:checking '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/bin'
+[5.074s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(anomaly_detection)
+[5.074s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/package.ps1'
+[5.074s] INFO:colcon.colcon_core.shell:Creating package descriptor '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/package.dsv'
+[5.075s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/package.sh'
+[5.075s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/package.bash'
+[5.075s] INFO:colcon.colcon_core.shell:Creating package script '/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection/package.zsh'
+[5.075s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/colcon-core/packages/anomaly_detection)
+[5.075s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[5.076s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[5.076s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '0'
+[5.076s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[5.080s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.notify_send': Could not find 'notify-send'
+[5.080s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[5.080s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[5.080s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[5.080s] DEBUG:colcon.colcon_notification.desktop_notification.notify2:Failed to initialize notify2: org.freedesktop.DBus.Error.NotSupported: Unable to autolaunch a dbus-daemon without a $DISPLAY for X11
+[5.080s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[5.080s] INFO:colcon.colcon_core.shell:Creating prefix script '/root/dev_ws/src/anomaly_detection/install/local_setup.ps1'
+[5.081s] INFO:colcon.colcon_core.shell:Creating prefix util module '/root/dev_ws/src/anomaly_detection/install/_local_setup_util_ps1.py'
+[5.081s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/root/dev_ws/src/anomaly_detection/install/setup.ps1'
+[5.082s] INFO:colcon.colcon_core.shell:Creating prefix script '/root/dev_ws/src/anomaly_detection/install/local_setup.sh'
+[5.083s] INFO:colcon.colcon_core.shell:Creating prefix util module '/root/dev_ws/src/anomaly_detection/install/_local_setup_util_sh.py'
+[5.083s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/root/dev_ws/src/anomaly_detection/install/setup.sh'
+[5.084s] INFO:colcon.colcon_core.shell:Creating prefix script '/root/dev_ws/src/anomaly_detection/install/local_setup.bash'
+[5.084s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/root/dev_ws/src/anomaly_detection/install/setup.bash'
+[5.085s] INFO:colcon.colcon_core.shell:Creating prefix script '/root/dev_ws/src/anomaly_detection/install/local_setup.zsh'
+[5.085s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/root/dev_ws/src/anomaly_detection/install/setup.zsh'

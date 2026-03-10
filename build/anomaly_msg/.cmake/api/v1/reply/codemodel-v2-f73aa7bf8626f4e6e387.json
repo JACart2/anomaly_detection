@@ -1,0 +1,242 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-64f2ec69d4c3d1bd9776.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18
+					]
+				},
+				{
+					"build" : "anomaly_msg__py",
+					"jsonFile" : "directory-anomaly_msg__py-2057824292a1bca8f85a.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "/root/dev_ws/src/anomaly_detection/build/anomaly_msg/anomaly_msg__py",
+					"targetIndexes" : 
+					[
+						4
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "anomaly_msg",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_build_anomaly_msg_egg::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_build_anomaly_msg_egg-16d6499e61b0bac43e6c.json",
+					"name" : "ament_cmake_python_build_anomaly_msg_egg",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_copy_anomaly_msg::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_copy_anomaly_msg-1e93aafea5206bcdc4c5.json",
+					"name" : "ament_cmake_python_copy_anomaly_msg",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg-6105fbf2634c8bdd118e.json",
+					"name" : "anomaly_msg",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__cpp-0f592194dc7870fabf3c.json",
+					"name" : "anomaly_msg__cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "anomaly_msg__py::@8a03119a2d1481d7413e",
+					"jsonFile" : "target-anomaly_msg__py-9cad620037c3c9973360.json",
+					"name" : "anomaly_msg__py",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_generator_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_generator_c-324a5bb08694603b6dda.json",
+					"name" : "anomaly_msg__rosidl_generator_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_generator_py::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_generator_py-9c232fa12369081f9852.json",
+					"name" : "anomaly_msg__rosidl_generator_py",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_generator_type_description::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_generator_type_description-0bdbd3d2c5ce370fdf2a.json",
+					"name" : "anomaly_msg__rosidl_generator_type_description",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_typesupport_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_typesupport_c-a22eb77e050ef47c3827.json",
+					"name" : "anomaly_msg__rosidl_typesupport_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_typesupport_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_typesupport_cpp-17bc9f30a88bfb0a6a3f.json",
+					"name" : "anomaly_msg__rosidl_typesupport_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_typesupport_fastrtps_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_typesupport_fastrtps_c-84c1757db4d008052efe.json",
+					"name" : "anomaly_msg__rosidl_typesupport_fastrtps_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_typesupport_fastrtps_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_typesupport_fastrtps_cpp-f7f8e0c5c64b1bac4a42.json",
+					"name" : "anomaly_msg__rosidl_typesupport_fastrtps_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_typesupport_introspection_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_typesupport_introspection_c-3f49ef72869410ab2e50.json",
+					"name" : "anomaly_msg__rosidl_typesupport_introspection_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg__rosidl_typesupport_introspection_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg__rosidl_typesupport_introspection_cpp-fa8db0e7f2442ea7fc6b.json",
+					"name" : "anomaly_msg__rosidl_typesupport_introspection_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg_s__rosidl_typesupport_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg_s__rosidl_typesupport_c-ff0fd464d5c463106bd2.json",
+					"name" : "anomaly_msg_s__rosidl_typesupport_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg_s__rosidl_typesupport_fastrtps_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg_s__rosidl_typesupport_fastrtps_c-67c92143f2adb98fd45b.json",
+					"name" : "anomaly_msg_s__rosidl_typesupport_fastrtps_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg_s__rosidl_typesupport_introspection_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg_s__rosidl_typesupport_introspection_c-e9bb678dd904df3243cd.json",
+					"name" : "anomaly_msg_s__rosidl_typesupport_introspection_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "anomaly_msg_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-anomaly_msg_uninstall-af35f28f00f50fc05565.json",
+					"name" : "anomaly_msg_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-d1a88ab01e3e51fff21f.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/root/dev_ws/src/anomaly_detection/build/anomaly_msg",
+		"source" : "/root/dev_ws/src/anomaly_detection/anomaly_msg"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 6
+	}
+}

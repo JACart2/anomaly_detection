@@ -1,0 +1,39 @@
+// generated from rosidl_adapter/resource/msg.idl.em
+// with input from anomaly_msg/msg/AnomalyLog.msg
+// generated code does not contain a copyright notice
+
+#include "builtin_interfaces/msg/Time.idl"
+
+module anomaly_msg {
+  module msg {
+    @verbatim (language="comment", text=
+      "Anomaly_log.msg")
+    struct AnomalyLog {
+      builtin_interfaces::msg::Time stamp;
+
+      @verbatim (language="comment", text=
+        "name of node publishing")
+      string node_name;
+
+      @verbatim (language="comment", text=
+        "camera, lidar, mic, etc.")
+      string source;
+
+      @verbatim (language="comment", text=
+        "relevant info, e.g. front camera")
+      string description;
+
+      @verbatim (language="comment", text=
+        "original topic name")
+      string topic_name;
+
+      @verbatim (language="comment", text=
+        "image, float32, pointcloud, etc.")
+      string data_type;
+
+      @verbatim (language="comment", text=
+        "relevant data")
+      sequence<uint8> data;
+    };
+  };
+};

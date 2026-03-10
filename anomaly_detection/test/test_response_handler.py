@@ -1,4 +1,14 @@
-from anomaly_detection.response_handler import parse_llm_response
+import sys
+import os
+
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+)
+
+from response_handler import parse_llm_response
+
+
+
 
 def main():
     valid_v1 = {"anomaly": True, "response": "alert_admin", "reason": "Repeated sensor dropout warnings."}

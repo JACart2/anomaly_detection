@@ -1,0 +1,43 @@
+[0.676s] Invoking command in '/root/dev_ws/src/anomaly_detection/anomaly_detection': AMENT_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${CMAKE_PREFIX_PATH} LD_LIBRARY_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib:${LD_LIBRARY_PATH} PYTHONPATH=/root/dev_ws/src/anomaly_detection/build/anomaly_detection/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages:/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/anomaly_detection build --build-base /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build install --record /root/dev_ws/src/anomaly_detection/build/anomaly_detection/install.log --single-version-externally-managed install_data
+[0.855s] running egg_info
+[0.855s] creating ../build/anomaly_detection/anomaly_detection.egg-info
+[0.866s] writing ../build/anomaly_detection/anomaly_detection.egg-info/PKG-INFO
+[0.866s] writing dependency_links to ../build/anomaly_detection/anomaly_detection.egg-info/dependency_links.txt
+[0.866s] writing entry points to ../build/anomaly_detection/anomaly_detection.egg-info/entry_points.txt
+[0.866s] writing requirements to ../build/anomaly_detection/anomaly_detection.egg-info/requires.txt
+[0.866s] writing top-level names to ../build/anomaly_detection/anomaly_detection.egg-info/top_level.txt
+[0.867s] writing manifest file '../build/anomaly_detection/anomaly_detection.egg-info/SOURCES.txt'
+[0.889s] reading manifest file '../build/anomaly_detection/anomaly_detection.egg-info/SOURCES.txt'
+[0.890s] writing manifest file '../build/anomaly_detection/anomaly_detection.egg-info/SOURCES.txt'
+[0.890s] running build
+[0.890s] running build_py
+[0.890s] creating /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build
+[0.891s] creating /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib
+[0.891s] creating /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+[0.891s] copying anomaly_detection/StringRingBuffer.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+[0.891s] copying anomaly_detection/openai_call.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+[0.891s] copying anomaly_detection/anomaly_detection_node.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+[0.891s] copying anomaly_detection/__init__.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+[0.891s] running install
+[0.896s] running install_lib
+[0.907s] creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+[0.907s] copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/StringRingBuffer.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+[0.907s] copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/openai_call.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+[0.907s] copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/anomaly_detection_node.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+[0.907s] copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/__init__.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+[0.908s] byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/StringRingBuffer.py to StringRingBuffer.cpython-312.pyc
+[0.908s] byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/openai_call.py to openai_call.cpython-312.pyc
+[0.909s] byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/anomaly_detection_node.py to anomaly_detection_node.cpython-312.pyc
+[0.910s] byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/__init__.py to __init__.cpython-312.pyc
+[0.910s] running install_data
+[0.910s] creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index
+[0.910s] creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index/resource_index
+[0.910s] creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index/resource_index/packages
+[0.910s] copying resource/anomaly_detection -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index/resource_index/packages
+[0.910s] copying package.xml -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection
+[0.910s] running install_egg_info
+[0.924s] Copying ../build/anomaly_detection/anomaly_detection.egg-info to /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection-0.0.1-py3.12.egg-info
+[0.925s] running install_scripts
+[1.009s] Installing anomaly_detection_node script to /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/anomaly_detection
+[1.009s] writing list of installed files to '/root/dev_ws/src/anomaly_detection/build/anomaly_detection/install.log'
+[1.031s] Invoked command in '/root/dev_ws/src/anomaly_detection/anomaly_detection' returned '0': AMENT_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg:${CMAKE_PREFIX_PATH} LD_LIBRARY_PATH=/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib:${LD_LIBRARY_PATH} PYTHONPATH=/root/dev_ws/src/anomaly_detection/build/anomaly_detection/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages:/root/dev_ws/src/anomaly_detection/install/anomaly_msg/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/anomaly_detection build --build-base /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build install --record /root/dev_ws/src/anomaly_detection/build/anomaly_detection/install.log --single-version-externally-managed install_data

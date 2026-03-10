@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "anomaly_msg__py",
+		"source" : "/root/dev_ws/src/anomaly_detection/build/anomaly_msg/anomaly_msg__py"
+	}
+}

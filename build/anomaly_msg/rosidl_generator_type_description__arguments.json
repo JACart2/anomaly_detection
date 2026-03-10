@@ -1,0 +1,10 @@
+{
+  "package_name": "anomaly_msg",
+  "output_dir": "/root/dev_ws/src/anomaly_detection/build/anomaly_msg/rosidl_generator_type_description/anomaly_msg",
+  "idl_tuples": [
+    "/root/dev_ws/src/anomaly_detection/build/anomaly_msg/rosidl_adapter/anomaly_msg:msg/AnomalyLog.idl"
+  ],
+  "include_paths": [
+    "builtin_interfaces:/opt/ros/jazzy/share/builtin_interfaces"
+  ]
+}

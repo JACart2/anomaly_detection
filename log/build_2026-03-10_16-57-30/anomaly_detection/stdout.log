@@ -1,0 +1,41 @@
+running egg_info
+creating ../build/anomaly_detection/anomaly_detection.egg-info
+writing ../build/anomaly_detection/anomaly_detection.egg-info/PKG-INFO
+writing dependency_links to ../build/anomaly_detection/anomaly_detection.egg-info/dependency_links.txt
+writing entry points to ../build/anomaly_detection/anomaly_detection.egg-info/entry_points.txt
+writing requirements to ../build/anomaly_detection/anomaly_detection.egg-info/requires.txt
+writing top-level names to ../build/anomaly_detection/anomaly_detection.egg-info/top_level.txt
+writing manifest file '../build/anomaly_detection/anomaly_detection.egg-info/SOURCES.txt'
+reading manifest file '../build/anomaly_detection/anomaly_detection.egg-info/SOURCES.txt'
+writing manifest file '../build/anomaly_detection/anomaly_detection.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build
+creating /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib
+creating /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+copying anomaly_detection/StringRingBuffer.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+copying anomaly_detection/openai_call.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+copying anomaly_detection/anomaly_detection_node.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+copying anomaly_detection/__init__.py -> /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection
+running install
+running install_lib
+creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/StringRingBuffer.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/openai_call.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/anomaly_detection_node.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+copying /root/dev_ws/src/anomaly_detection/build/anomaly_detection/build/lib/anomaly_detection/__init__.py -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection
+byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/StringRingBuffer.py to StringRingBuffer.cpython-312.pyc
+byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/openai_call.py to openai_call.cpython-312.pyc
+byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/anomaly_detection_node.py to anomaly_detection_node.cpython-312.pyc
+byte-compiling /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection/__init__.py to __init__.cpython-312.pyc
+running install_data
+creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index
+creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index/resource_index
+creating /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index/resource_index/packages
+copying resource/anomaly_detection -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/ament_index/resource_index/packages
+copying package.xml -> /root/dev_ws/src/anomaly_detection/install/anomaly_detection/share/anomaly_detection
+running install_egg_info
+Copying ../build/anomaly_detection/anomaly_detection.egg-info to /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/python3.12/site-packages/anomaly_detection-0.0.1-py3.12.egg-info
+running install_scripts
+Installing anomaly_detection_node script to /root/dev_ws/src/anomaly_detection/install/anomaly_detection/lib/anomaly_detection
+writing list of installed files to '/root/dev_ws/src/anomaly_detection/build/anomaly_detection/install.log'
