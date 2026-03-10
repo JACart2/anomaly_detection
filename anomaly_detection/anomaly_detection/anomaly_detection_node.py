@@ -8,9 +8,12 @@ from std_msgs.msg import String
 from anomaly_msg.msg import AnomalyMsg
 
 from anomaly_detection.StringRingBuffer import StringRingBuffer
+from anomaly_detection.llm_client import LLMClient
 
 
 class AnomalyDetectionNode(Node):
+
+    
     def __init__(self):
         super().__init__('anomaly_detection')
 
@@ -42,7 +45,6 @@ class AnomalyDetectionNode(Node):
             AnomalyMsg,
             self.raw_input_topic,
             self.log_caching_callback,
-            10
         )
 
         self.timer = self.create_timer(self.api_frequency_seconds, self.llm_callback)
@@ -97,7 +99,12 @@ class AnomalyDetectionNode(Node):
             return
             
         full_payload = "".join(raw_list) 
+
         # Process the messages with your LLM logic here
+        llm = LLMClient()
+
+        response = llm.chat(full_payload)
+
         self.get_logger().info(
             f"Processing {len(self.queue.buffer)} anomaly messages..."
         )

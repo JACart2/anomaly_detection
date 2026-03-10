@@ -10,7 +10,9 @@ cache_max_age_seconds: = 30
 
 raw_input_topic: "/ai_anomaly_logging" #Update it to match github
 #trimmed_output_topic: "/add/trimmed_data" #Update to match github
-
+llm: 
+  model_provider: "openai"
+  model: 'gpt-4o'
 
 
 
