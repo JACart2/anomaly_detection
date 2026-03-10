@@ -17,7 +17,7 @@ class AnomalyDetectionNode(Node):
     """
     AAD ROS2 node:
       - Subscribes to /ai_anomaly_logging (standardized logging topic)
-      - Caches a bounded, LLM-friendly representation of AnomalyMsg
+      - Caches a bounded, LLM-friendly representation of AnomalyLog
       - Periodically calls the LLM/API
       - Parses result via response_handler into a Decision
       - Publishes alerts to /aad/alerts when anomalies are detected
@@ -54,7 +54,7 @@ class AnomalyDetectionNode(Node):
 
         # Subscribe to standardized logging topic
         self.subscription = self.create_subscription(
-            AnomalyMsg,
+            AnomalyLog,
             self.raw_input_topic,
             self.log_caching_callback,
             10,
@@ -110,20 +110,20 @@ class AnomalyDetectionNode(Node):
         return float(t.nanoseconds) / 1e9
 
     def _importance_to_str(self, importance: int) -> str:
-        if importance == AnomalyMsg.ERROR:
+        if importance == AnomalyLog.ERROR:
             return "ERROR"
-        if importance == AnomalyMsg.WARNING:
+        if importance == AnomalyLog.WARNING:
             return "WARNING"
         return "INFO"
 
     def _type_to_str(self, msg_type: int) -> str:
-        if msg_type == AnomalyMsg.IMAGE:
+        if msg_type == AnomalyLog.IMAGE:
             return "IMAGE"
-        if msg_type == AnomalyMsg.DATA:
+        if msg_type == AnomalyLog.DATA:
             return "DATA"
         return "TEXT"
 
-    def _format_for_llm(self, m: AnomalyMsg) -> str:
+    def _format_for_llm(self, m: AnomalyLog) -> str:
         """
         Compact, LLM-friendly representation.
 
@@ -153,7 +153,7 @@ class AnomalyDetectionNode(Node):
         )
 
         # IMAGE metadata (no pixels)
-        if m.type == AnomalyMsg.IMAGE:
+        if m.type == AnomalyLog.IMAGE:
             try:
                 img = m.image
                 base += f" image={img.width}x{img.height} enc={img.encoding}"
@@ -161,7 +161,7 @@ class AnomalyDetectionNode(Node):
                 base += " image=<unavailable>"
 
         # DATA metadata (no raw bytes)
-        if m.type == AnomalyMsg.DATA:
+        if m.type == AnomalyLog.DATA:
             try:
                 base += f" data_type={m.data_type} data_len={len(m.data)}"
             except Exception:
@@ -169,9 +169,9 @@ class AnomalyDetectionNode(Node):
 
         return base
 
-    def log_caching_callback(self, msg: AnomalyMsg) -> None:
+    def log_caching_callback(self, msg: AnomalyLog) -> None:
         """
-        Cache incoming AnomalyMsg strings.
+        Cache incoming AnomalyLog strings.
         Throttle INFO messages (optional), but always keep WARNING/ERROR.
         """
         self._msg_count += 1
@@ -179,7 +179,7 @@ class AnomalyDetectionNode(Node):
             self.get_logger().info(f"Received {self._msg_count} messages on {self.raw_input_topic}")
 
         # Optional INFO throttling
-        if self.throttle_info and int(msg.importance) == AnomalyMsg.INFO:
+        if self.throttle_info and int(msg.importance) == AnomalyLog.INFO:
             now = self._now_sec()
             if (now - self._last_info_time_sec) < self.info_min_period_sec:
                 return
