@@ -1,2 +1,0 @@
-[console_scripts]
-anomaly_detection_node = anomaly_detection.anomaly_detection_node:main

@@ -1,6 +1,0 @@
-{
-  "package_name": "anomaly_msg",
-  "non_idl_tuples": [
-    "/root/dev_ws/src/anomaly_detection/anomaly_msg:msg/AnomalyLog.msg"
-  ]
-}

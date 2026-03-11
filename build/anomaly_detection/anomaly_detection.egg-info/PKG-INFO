@@ -1,7 +1,0 @@
-Metadata-Version: 2.1
-Name: anomaly-detection
-Version: 0.0.1
-Summary: Aggregates anomaly messages and writes to bag
-Maintainer: Your Name
-Maintainer-email: you@example.com
-License: Apache-2.0
