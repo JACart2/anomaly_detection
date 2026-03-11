@@ -1,6 +1,0 @@
-setup.py
-anomaly_msg/__init__.py
-anomaly_msg.egg-info/PKG-INFO
-anomaly_msg.egg-info/SOURCES.txt
-anomaly_msg.egg-info/dependency_links.txt
-anomaly_msg.egg-info/top_level.txt
