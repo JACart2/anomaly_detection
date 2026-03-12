@@ -19,8 +19,9 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'fake_camera_node = tester.fake_camera_node:main',
+            'camera_anomaly_node = tester.camera_anomaly_publisher:main',
             'lidar_test_node = tester.lidar_test_node:main',
+            'eta_anomaly_node = tester.eta_anomaly_publisher:main',
         ],
     },
 )

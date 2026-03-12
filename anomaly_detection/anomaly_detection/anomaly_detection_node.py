@@ -6,11 +6,12 @@ from typing import Any, Dict
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from anomaly_msg.msg import AnomalyMsg
 
-from anomaly_msg.msg import AnomalyLog
 from anomaly_detection.openai_call import call_openai
 from anomaly_detection.response_handler import parse_llm_response
 from anomaly_detection.StringRingBuffer import StringRingBuffer
+from anomaly_detection.llm_client import LLMClient
 
 
 class AnomalyDetectionNode(Node):
@@ -54,7 +55,7 @@ class AnomalyDetectionNode(Node):
 
         # Subscribe to standardized logging topic
         self.subscription = self.create_subscription(
-            AnomalyLog,
+            AnomalyMsg,
             self.raw_input_topic,
             self.log_caching_callback,
             10,
@@ -208,8 +209,11 @@ class AnomalyDetectionNode(Node):
         full_payload = "\n".join(raw_list)
 
         try:
-            api_resp = call_openai(full_payload)
-            decision = parse_llm_response(api_resp)
+            # Process the messages with your LLM logic here
+            llm = LLMClient()
+
+            response = llm.chat(full_payload)
+            decision = parse_llm_response(response)
 
             if decision.raw is None:
                 self.get_logger().error(

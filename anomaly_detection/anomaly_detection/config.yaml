@@ -1,12 +1,21 @@
 # AAD Configuration File
 # Controls artifact generation and API trigger behavior.
 
-artifact_frequency_seconds: 30
-artifact_duration_seconds: 10
+#The amount of time between api calls
 api_frequency_seconds: 60
 
+#The max amount of messages stored
 cache_max_items: 100
 cache_max_age_seconds: 30
+
+# The LLM info used to select the model in llm_client.py
+# Args:
+#   model_provider: Name of model provider 
+#   model: Name of specific model
+llm: 
+  model_provider: "openai"
+  model: 'gpt-4o'
+
 
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"

@@ -31,8 +31,8 @@ class LidarTestNode(Node):
         msg.source = "lidar"
         msg.description = "roof_lidar"
         msg.data_type = "PointCloud"
-        msg.data = list(self.lidar_data.data)
         if self.lidar_data:
+            msg.data = list(self.lidar_data.data)
             self.publisher.publish(msg)
             self.get_logger().info("Published lidar data")
 
