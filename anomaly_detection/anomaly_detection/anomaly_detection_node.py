@@ -1,7 +1,6 @@
 import os
 import yaml
 import json
-from typing import Any, Dict
 
 from std_msgs.msg import String
 from anomaly_msg.msg import AnomalyMsg
@@ -17,7 +16,8 @@ from anomaly_detection.response_handler import parse_llm_response
 from anomaly_detection.StringRingBuffer import StringRingBuffer
 from anomaly_detection.llm_client import LLMClient
 
-
+## TODO document class and submethods.
+## TODO use python logging class for our log messages to include the stack trace/line number
 class AnomalyDetectionNode(Node):
     """
     AAD ROS2 node:
@@ -158,11 +158,14 @@ class AnomalyDetectionNode(Node):
             self.get_logger().error(f"Failed to load config file {config_path}: {e}. Using defaults.")
             return {}
 
+    ## TODO is this used anywhere? if not lets remove.
     @staticmethod
     def to_jsonl(buffer) -> str:
         """Convert list of JSON-serializable objects to JSONL."""
         return "\n".join(json.dumps(obj, separators=(",", ":")) for obj in buffer)
 
+    ## TODO do we want these below 3 methods (_now_sec, _importance_to_str, _type_to_str)? they are only used in one place, and it seems a bit cluttered.
+    ## do we anticipate more complex formatting later on that would need these?
     def _now_sec(self) -> float:
         """Current node time in seconds (ROS clock)."""
         t = self.get_clock().now()
@@ -192,6 +195,7 @@ class AnomalyDetectionNode(Node):
         """
         # Header info
         ts = "unknown"
+        ## TODO what is the purpose of these try/except blocks? do we want to allow malformed timestamp?
         try:
             ts = f"{m.header.stamp.sec}.{m.header.stamp.nanosec:09d}"
         except Exception:

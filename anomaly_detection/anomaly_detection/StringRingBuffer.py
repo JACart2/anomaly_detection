@@ -1,3 +1,4 @@
+## TODO document this, also can this be replaced with just an imported queue?
 class StringRingBuffer:
     def __init__(self, max_items: int):
         # Maximum number of elements the buffer can hold

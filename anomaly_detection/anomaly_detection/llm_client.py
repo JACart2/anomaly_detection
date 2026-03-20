@@ -66,6 +66,7 @@ class LLMClient:
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
                 )
 
+        ## TODO are api_key and api_base used in all completions (openai/anthropic)? Also, would this work for bedrock (AWS_ACCESS_KEY_ID)
         response = litellm.completion(
             model=self.model,
             messages=[{"role": "user", "content": content}],
