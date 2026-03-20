@@ -16,7 +16,7 @@ llm:
   model_provider: "openai"
   model: 'gpt-4o'
 
-buffer_model: False
+trigger_script: False
 
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"

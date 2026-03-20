@@ -1,4 +1,4 @@
-"""Emotion Recognition of input video feed. Buffer model for AI Anomaly Detection (https://github.com/JACart2/anomaly_detection)
+"""Emotion Recognition of input video feed. Trigger script for AI Anomaly Detection (https://github.com/JACart2/anomaly_detection)
 
 Author: John Rosario Cruz
 Version: 3/9/2026
@@ -22,7 +22,7 @@ from fer.fer import FER
 import re
 import time
 
-class BufferModel(Node):
+class TriggerScript(Node):
     """
     Description
     ------------
@@ -247,17 +247,17 @@ def main() -> None:
     ## waiting for backend service to spin up their topic
     time.sleep(20)
     rclpy.init()
-    buffer_model_node = BufferModel()
+    trigger_script_node = TriggerScript()
 
     try:
-        rclpy.spin(buffer_model_node)
+        rclpy.spin(trigger_script_node)
     except KeyboardInterrupt:
         pass
     finally:
         ## ending threads, ending listener_callback() functionality
-        buffer_model_node.stop_event.set()
-        buffer_model_node.thread_process.join()
-        buffer_model_node.destroy_node()
+        trigger_script_node.stop_event.set()
+        trigger_script_node.thread_process.join()
+        trigger_script_node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':

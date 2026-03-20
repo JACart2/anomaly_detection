@@ -37,8 +37,8 @@ class AnomalyDetectionNode(Node):
         # Standard topic defaults
         self.raw_input_topic = self.config.get("raw_input_topic", "/ai_anomaly_logging")
         self.alert_topic = self.config.get("alert_topic", "/aad/alerts")
-        # Determine if buffer model is enabled (default to False if not specified)
-        self.buffer_model_enabled = self.config.get("buffer_model", False)
+        # Determine if trigger script is enabled (default to False if not specified)
+        self.trigger_script_enabled = self.config.get("trigger_script", False)
 
         # Timing (safe defaults)
         self.api_frequency_seconds = float(self.config.get("api_frequency_seconds", 60.0))
@@ -51,9 +51,9 @@ class AnomalyDetectionNode(Node):
         self.throttle_info = bool(self.config.get("throttle_info", True))
         self.info_min_period_sec = float(self.config.get("info_min_period_sec", 1.0))
         self._last_info_time_sec = 0.0
-        if (self.buffer_model_enabled):
-            self.get_logger().info("Buffer model enabled. Running install.sh")
-            self._run_buffer_model_install()
+        if (self.trigger_script_enabled):
+            self.get_logger().info("Trigger script enabled. Running install.sh")
+            self._run_trigger_script_install()
 
         # Debug logging controls
         self._msg_count = 0
@@ -70,8 +70,8 @@ class AnomalyDetectionNode(Node):
             10,
         )
 
-        if (self.buffer_model_enabled):
-            self._start_buffer_model()
+        if (self.trigger_script_enabled):
+            self._start_trigger_script()
 
         self.timer = self.create_timer(self.api_frequency_seconds, self.llm_callback)
 
@@ -82,43 +82,43 @@ class AnomalyDetectionNode(Node):
             f"throttle_info={self.throttle_info}, info_min_period_sec={self.info_min_period_sec}"
         )
 
-    def _start_buffer_model(self) -> None:
+    def _start_trigger_script(self) -> None:
         try:
-            from anomaly_detection.buffer_model.buffer_model import BufferModel
+            from anomaly_detection.anomaly_detection.anomaly_detection.trigger_script.trigger_script import TriggerScript
         except Exception as e:
-            self.get_logger().error(f"Failed to import BufferModel: {e}")
+            self.get_logger().error(f"Failed to import TriggerScript: {e}")
             return
 
-        self.buffer_model_node = BufferModel()
-        self._buffer_model_monitor_stop = threading.Event()
-        self._buffer_model_monitor_thread = threading.Thread(
-            target=self._monitor_buffer_model_anomalies,
+        self.trigger_script_node = TriggerScript()
+        self._trigger_script_monitor_stop = threading.Event()
+        self._trigger_script_monitor_thread = threading.Thread(
+            target=self._monitor_trigger_script_anomalies,
             daemon=True,
         )
-        self._buffer_model_monitor_thread.start()
+        self._trigger_script_monitor_thread.start()
 
-    def _monitor_buffer_model_anomalies(self) -> None:
+    def _monitor_trigger_script_anomalies(self) -> None:
         poll_seconds = 0.2
-        while not self._buffer_model_monitor_stop.is_set():
-            msg = self.buffer_model_node.consume_anomaly_message()
+        while not self._trigger_script_monitor_stop.is_set():
+            msg = self.trigger_script_node.consume_anomaly_message()
             if msg:
                 self.queue.add(msg)
                 self.llm_callback()
             else:
                 time.sleep(poll_seconds)
 
-    def _stop_buffer_model(self) -> None:
-        if hasattr(self, "_buffer_model_monitor_stop"):
-            self._buffer_model_monitor_stop.set()
-        if hasattr(self, "_buffer_model_monitor_thread"):
-            if self._buffer_model_monitor_thread.is_alive():
-                self._buffer_model_monitor_thread.join(timeout=1.0)
+    def _stop_trigger_script(self) -> None:
+        if hasattr(self, "_trigger_script_monitor_stop"):
+            self._trigger_script_monitor_stop.set()
+        if hasattr(self, "_trigger_script_monitor_thread"):
+            if self._trigger_script_monitor_thread.is_alive():
+                self._trigger_script_monitor_thread.join(timeout=1.0)
 
-    def _run_buffer_model_install(self) -> None:
+    def _run_trigger_script_install(self) -> None:
         """
-        Run buffer model installation (from __init__). Assumes install.sh is in the buffer_model subfolder and is executable.
+        Run trigger script installation (from __init__). Assumes install.sh is in the trigger_script subfolder and is executable.
         """
-        script_path = os.path.join(os.path.dirname(__file__), "buffer_model", "install.sh")
+        script_path = os.path.join(os.path.dirname(__file__), "trigger_script", "install.sh")
         if not os.path.isfile(script_path):
             self.get_logger().error(f"install.sh not found at {script_path}")
             return
@@ -312,18 +312,18 @@ def main(args=None) -> None:
     node = AnomalyDetectionNode()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
-    if hasattr(node, "buffer_model_node"):
-        executor.add_node(node.buffer_model_node)
+    if hasattr(node, "trigger_script_node"):
+        executor.add_node(node.trigger_script_node)
 
     try:
         executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        node._stop_buffer_model()
-        if hasattr(node, "buffer_model_node"):
-            node.buffer_model_node.stop_event.set()
-            node.buffer_model_node.destroy_node()
+        node._stop_trigger_script()
+        if hasattr(node, "trigger_script_node"):
+            node.trigger_script_node.stop_event.set()
+            node.trigger_script_node.destroy_node()
         node.destroy_node()
         executor.shutdown()
         rclpy.shutdown()
