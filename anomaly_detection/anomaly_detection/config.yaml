@@ -16,6 +16,7 @@ llm:
   model_provider: "openai"
   model: 'gpt-4o'
 
+## TODO replace logic with ROSy way in sprint 3
 trigger_script: False
 
 raw_input_topic: "/ai_anomaly_logging"

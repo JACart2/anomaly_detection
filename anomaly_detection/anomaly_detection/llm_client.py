@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 # Load .env automatically
 load_dotenv()
 
-
 def encode_image(image_tensor):
     """
     Encode a numpy image array as base64 PNG string
@@ -28,8 +27,27 @@ def encode_image(image_tensor):
 
 class LLMClient:
     """
-    General-purpose client for LiteLLM providers.
-    Reads API keys from .env and provider/model from config.yaml
+    Description
+    ------------
+        General-purpose LiteLLM client that loads config from config.yaml and API keys from environment variables. Supports sending text and images to the LLM.
+    
+    Attributes
+    ----------
+        provider (str): The LLM provider name.
+
+        model_name (str): The specific model name.
+
+        model (str): The composed LiteLLM model string.
+
+        api_key (str): The API key for the LLM provider.
+        
+        api_base (str): The base URL for the LLM API.
+
+    Methods
+    -------
+        chat(text: str, images=None):
+            Send a message to specified LLM, find proper API key for auth.
+    
     """
 
     def __init__(self, config_path="config.yaml"):
@@ -66,7 +84,7 @@ class LLMClient:
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
                 )
 
-        ## TODO are api_key and api_base used in all completions (openai/anthropic)? Also, would this work for bedrock (AWS_ACCESS_KEY_ID)
+        ## TODO are api_key and api_base used in all completions (openai/anthropic)? Also, would this work for AWS bedrock (AWS_ACCESS_KEY_ID)
         response = litellm.completion(
             model=self.model,
             messages=[{"role": "user", "content": content}],
