@@ -1,15 +1,22 @@
 # AI Anomaly Detection
-Last updated: 3/20/2026 (Sprint 2)
+Last updated: 3/22/2026 (Sprint 2)
 
-Anomaly Detection ROS2 system. Set to integrate with LiteLLM (https://docs.litellm.ai/docs/) for API integration. Currently integrates with trigger scripts through trigger_script folder directly (will be rewritten to use new topic in Sprint 3)
+Anomaly Detection ROS2 system. Set to integrate with LiteLLM (https://docs.litellm.ai/docs/) for API integration. Currently integrates with trigger scripts through trigger_script folder directly (will be rewritten to use new topic in Sprint 3). 
 
-Future development should provide alternatives for API integration, API buffer models, data source topics, meaningful data processing, and automated system deployment and artifact creation. 
+1. Subscribes to `raw_input_topic` containing AnomalyMsg types 
+2. Processes them into LLM-friendly format & stores in cache 
+3. Periodic/on-demand (`trigger_script.py`) cache dump and LLM call using `llm_client.py` 
+4. LLM response standardization into `Decision` type using `response_handler.py` 
+5. Decision evaluation and alert publishing
+6. .bag file of entire run context monitoring `raw_input_topic`
+
+Future development will provide dynamic trigger script integration logic, additional artifact creation for cache/API responses, and dynamic config file selection for system evaluation.
 
 ## Prerequisites
-_It is recommended that this system exists in a Docker container that shares a network with the source of ROS2 topics publishing system data. See (https://github.com/JACart2/docker_files)_
+_It is recommended that this system exists in a Docker container that shares a network with (or contains) the source of ROS2 topics publishing system data. See (https://github.com/JACart2/docker_files)_
 
 * ROS2 installed
-* Requirements.txt (see https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/requirements.txt)
+* Requirements.txt. See (https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/requirements.txt)
 * .env for local testing/prod run. Contains the API key associated with the model specified in config.yaml
 
 ## Project Structure
@@ -21,16 +28,19 @@ The declaration of the custom message type that the anomaly detection system exp
 This provides two utility nodes: `fake_camera_data` and `lidar_test_node`. Both of these will publish fake data and may be used to test dataflow in the system without external node access. This can be ran with `ros2 run tester <NODE>`.
 
 ### ./anomaly_detection
-This is the ROS2 node declaration for the anomaly detection system. The logic is located under `./anomaly_detection/anomaly_detection`. `anomaly_detection_node.py` contains the manager that will handle API integration, data subscription, data processing, and subsequent action for the system to take if anomalies are detected. `config.yaml` contains system configuration for the system. `llm_client.py` is the current API integration.
+This is the ROS2 node declaration for the anomaly detection system. `anomaly_detection_node.py` contains the manager that will handle API integration, data collection/processing, trigger integration, and alert publishing. 
 
+`config.yaml` contains system configuration.
+`llm_client.py` is the API integration.
+`response_handler.py` standardizes API responses into a `Decision` type.
 
 ## System Diagrams
 
 ### Architecture Diagram
-![Architecture Diagram](docs/cs480_sprint1_arch_diagram_alt.jpeg)
+![Architecture Diagram](docs/cs480_sprint2_arch_diagram.jpeg)
 
 ### Dataflow Digram
-![Dataflow Diagram](docs/cs480_sprint1_dataflow_diagram.jpeg)
+![Dataflow Diagram](docs/cs480_sprint2_dataflow_diagram.jpeg)
 
 
 ## Usage
