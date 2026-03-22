@@ -85,6 +85,7 @@ class LLMClient:
                 )
 
         ## TODO are api_key and api_base used in all completions (openai/anthropic)? Also, would this work for AWS bedrock (AWS_ACCESS_KEY_ID)
+        ## TODO also lets verify that response is not just NULL or something when the API key is bad
         response = litellm.completion(
             model=self.model,
             messages=[{"role": "user", "content": content}],
