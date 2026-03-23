@@ -11,7 +11,7 @@ class CameraAnomalyPublisher(Node):
         # Subscriber to the real camera topic
         self.camera_sub = self.create_subscription(
             Image,
-            '/camera/image_raw',
+            '/zed_rear/zed_node_1/rgb/color/rect/image',
             self.camera_callback,
             10
         )

@@ -50,6 +50,7 @@ class LLMClient:
     
     """
 
+    ## TODO this path may not be valid b/c of the context being of working dir and not script, self.provider is never created and we fail looking for an attr that doesnt exist at line 63.
     def __init__(self, config_path="config.yaml"):
         # Load YAML config
 
