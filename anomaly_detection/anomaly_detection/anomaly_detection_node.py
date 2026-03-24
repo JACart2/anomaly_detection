@@ -12,7 +12,7 @@ import threading
 import time
 
 import rclpy
-from std_msgs.msg import String
+from std_msgs.msg import String as ROSString
 from anomaly_msg.msg import AnomalyMsg
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -99,12 +99,17 @@ class AnomalyDetectionNode(Node):
         self.config = self._load_config()
 
         # Standard topic defaults
+        self.trigger_input_topic = self.config.get("trigger_input_topic", "/trigger_messages")
         self.raw_input_topic = self.config.get("raw_input_topic", "/ai_anomaly_logging")
         self.alert_topic = self.config.get("alert_topic", "/aad/alerts")
 
-        ## TODO update to ROSy way in sprint 3.
-        # Determine if trigger script is enabled (default to False if not specified)
-        self.trigger_script_enabled = self.config.get("trigger_script", False)
+        ## Install deps for chosen triggers & start them
+        self.triggers = self.config.get("trigger_scripts", [])
+        self.trigger_nodes = []
+        for trigger in self.triggers:
+            self.get_logger().info(f"Configured trigger script: {trigger}")
+            ## create list of node objects to add to executor in main.
+            self.trigger_nodes.append(self._run_trigger_script_install(trigger))
 
         # Timing (safe defaults)
         self.api_frequency_seconds = float(self.config.get("api_frequency_seconds", 60.0))
@@ -118,29 +123,28 @@ class AnomalyDetectionNode(Node):
         self.info_min_period_sec = float(self.config.get("info_min_period_sec", 1.0))
         self._last_info_time_sec = 0.0
 
-        ## TODO update to ROSy way in sprint3
-        if (self.trigger_script_enabled):
-            self.get_logger().info("Trigger script enabled. Running install.sh")
-            self._run_trigger_script_install()
-
         # Debug logging controls
         self._msg_count = 0
         self.log_every_n_msgs = int(self.config.get("log_every_n_msgs", 50))
 
         # Publisher for alerts
-        self.alert_pub = self.create_publisher(String, self.alert_topic, 10)
+        self.alert_pub = self.create_publisher(ROSString, self.alert_topic, 10)
 
-        # Subscribe to standardized logging topic
-        self.subscription = self.create_subscription(
+        # Subscribe to standardized logging topic & trigger messages topic
+        self.create_subscription(
             AnomalyMsg,
             self.raw_input_topic,
             self.log_caching_callback,
             10,
         )
 
-        ## TODO update to ROSy way in sprint3
-        if (self.trigger_script_enabled):
-            self._start_trigger_script()
+        ## TODO create trigger_message_callback that adds to queue.
+        self.create_subscription(
+            ROSString,
+            self.trigger_input_topic,
+            self.trigger_message_callback,
+            10,
+        )
 
         self.create_timer(self.api_frequency_seconds, self.llm_callback)
 
@@ -213,7 +217,7 @@ class AnomalyDetectionNode(Node):
                 )
 
             if decision.anomaly:
-                alert = String()
+                alert = ROSString()
                 alert.data = (
                     f"[AAD ALERT] severity={decision.severity} "
                     f"action={decision.action} summary={decision.summary}"
@@ -227,53 +231,20 @@ class AnomalyDetectionNode(Node):
 
         self.queue.clear()
 
-    def _start_trigger_script(self) -> None:
-        """
-        Initializes and starts the trigger script if enabled. Runs the trigger script in a separate thread and monitors for anomaly messages from it.
-        """
-        try:
-            from anomaly_detection.anomaly_detection.trigger_script.trigger_script import TriggerScript
-        except Exception as e:
-            self.get_logger().error(f"Line {sys._getframe().f_lineno}:Failed to import TriggerScript: {e}")
-            return
-
-        self.trigger_script_node = TriggerScript()
-        self._trigger_script_monitor_stop = threading.Event()
-        self._trigger_script_monitor_thread = threading.Thread(
-            target=self._monitor_trigger_script_anomalies,
-            daemon=True,
-        )
-        self._trigger_script_monitor_thread.start()
-
-    def _monitor_trigger_script_anomalies(self) -> None:
-        """
-        Loop that runs in a separate thread to consume anomaly messages from the trigger script and add them to the cache for LLM processing.
-        """
-        ## TODO this is arbitrary, but will be replaced with new logic in sprint 3.
-        poll_seconds = 0.2
-        while not self._trigger_script_monitor_stop.is_set():
-            msg = self.trigger_script_node.consume_anomaly_message()
-            if msg:
-                self.queue.add(msg)
-                self.llm_callback()
-            else:
-                time.sleep(poll_seconds)
-
-    def _stop_trigger_script(self) -> None:
-        """
-        Stops the trigger script monitoring thread.
-        """
-        if hasattr(self, "_trigger_script_monitor_stop"):
-            self._trigger_script_monitor_stop.set()
-        if hasattr(self, "_trigger_script_monitor_thread"):
-            if self._trigger_script_monitor_thread.is_alive():
-                self._trigger_script_monitor_thread.join(timeout=1.0)
-
-    def _run_trigger_script_install(self) -> None:
+    def trigger_message_callback(self, msg: ROSString) -> None:
+        self._msg_count += 1
+        self.queue.add(msg.data)
+        self.llm_callback() 
+        return
+    ## TODO import and return the node
+    def _run_trigger_script_install(self, trigger: str) -> Node:
         """
         Run trigger script installation (from __init__). Assumes install.sh is in the trigger_script subfolder and is executable.
+        
+        Args:
+            trigger (str): The name of the trigger script to install. Should correspond to a subfolder in triggers/ with an install.sh script.
         """
-        script_path = os.path.join(os.path.dirname(__file__), "trigger_script", "install.sh")
+        script_path = os.path.join(os.path.dirname(__file__), "triggers", trigger, "install.sh")
         if not os.path.isfile(script_path):
             self.get_logger().error(f"Line {sys._getframe().f_lineno}: install.sh not found at {script_path}")
             return
@@ -283,7 +254,7 @@ class AnomalyDetectionNode(Node):
             self.get_logger().info("install.sh completed.")
         except subprocess.CalledProcessError as e:
             self.get_logger().error(f"Line {sys._getframe().f_lineno}: install.sh failed: {e}")
-
+        
     def _load_config(self) -> dict:
         """
         Loads config.yaml from disk.
@@ -419,18 +390,20 @@ def main(args=None) -> None:
     node = AnomalyDetectionNode()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
-    if hasattr(node, "trigger_script_node"):
-        executor.add_node(node.trigger_script_node)
+    if hasattr(node, "trigger_nodes"):
+        for trigger_node in node.trigger_nodes:
+            executor.add_node(trigger_node)
 
     try:
         executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        node._stop_trigger_script()
-        if hasattr(node, "trigger_script_node"):
-            node.trigger_script_node.stop_event.set()
-            node.trigger_script_node.destroy_node()
+        ## destroy trigger script nodes if they exist
+        if hasattr(node, "trigger_nodes"):
+            for trigger_node in node.trigger_nodes:
+                trigger_node.destroy_node()
+
         node.destroy_node()
         executor.shutdown()
         rclpy.shutdown()
