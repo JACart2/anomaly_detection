@@ -2,7 +2,7 @@
 # Controls artifact generation and API trigger behavior.
 
 #The amount of time between api calls
-api_frequency_seconds: 60
+api_frequency_seconds: 15
 
 #The max amount of messages stored
 cache_max_items: 100
@@ -25,4 +25,4 @@ alert_topic: "/aad/alerts"
 throttle_info: true
 info_min_period_sec: 0.1
 
-log_every_n_msgs: 50
+log_every_n_msgs: 1

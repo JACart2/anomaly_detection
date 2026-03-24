@@ -22,6 +22,7 @@ setup(
             'camera_anomaly_node = tester.camera_anomaly_publisher:main',
             'lidar_test_node = tester.lidar_test_node:main',
             'eta_anomaly_node = tester.eta_anomaly_publisher:main',
+            'offline_eta_anomaly_node = tester.offline_eta_anomaly_publisher:main',
         ],
     },
 )
