@@ -23,6 +23,6 @@ raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
 
 throttle_info: true
-info_min_period_sec: 1.0
+info_min_period_sec: 0.1
 
 log_every_n_msgs: 50

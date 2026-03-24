@@ -54,17 +54,23 @@ class LLMClient:
     def __init__(self, config_path="config.yaml"):
         # Load YAML config
         config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
-        
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-            self.provider = cfg.get("llm", {}).get("provider", self.provider)
-            self.model_name = cfg.get("llm", {}).get("model", self.model_name)
+        print(f"Config path={config_path}, ")
+        self.provider = "openai"
+        self.model_name = "gpt-4o"
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                print("Config file loaded but is not a YAML mapping. Using defaults.")
+                return {}
+            print(data)
+            self.provider = data.get("llm", {}).get("model_provider", self.provider)
+            self.model_name = data.get("llm", {}).get("model", self.model_name)
 
         # Compose LiteLLM model string
         self.model = f"{self.provider}/{self.model_name}"
 
         # Load env vars
-        self.api_key = os.getenv(f"{self.provider.upper()}_API_KEY")
+        # self.api_key = os.getenv(f"{self.provider.upper()}_API_KEY")
         self.api_base = os.getenv(f"{self.provider.upper()}_API_BASE", None)
 
     def chat(self, text, images=None):
@@ -91,7 +97,7 @@ class LLMClient:
         response = litellm.completion(
             model=self.model,
             messages=[{"role": "user", "content": content}],
-            api_key=self.api_key,
+            # api_key=self.api_key,
             api_base=self.api_base,
         )
 
