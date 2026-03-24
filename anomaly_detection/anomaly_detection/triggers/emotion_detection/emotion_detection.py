@@ -22,7 +22,7 @@ from fer.fer import FER
 import re
 import time
 
-class TriggerScript(Node):
+class EmotionDetection(Node):
     """
     Description
     ------------
@@ -81,7 +81,8 @@ class TriggerScript(Node):
 
     def __init__(self):
         ## configure camera setup
-        super().__init__('emotion_recognition_node')
+        ## must match name of dir containing script
+        super().__init__('emotion_detection')
         self.bridge = CvBridge()
 
         # subscription
@@ -244,20 +245,18 @@ class TriggerScript(Node):
 def main() -> None:
     """Main callpoint of the class.
     """
-    ## waiting for backend service to spin up their topic
-    time.sleep(20)
     rclpy.init()
-    trigger_script_node = TriggerScript()
+    emotion_detection_node = EmotionDetection()
 
     try:
-        rclpy.spin(trigger_script_node)
+        rclpy.spin(emotion_detection_node)
     except KeyboardInterrupt:
         pass
     finally:
         ## ending threads, ending listener_callback() functionality
-        trigger_script_node.stop_event.set()
-        trigger_script_node.thread_process.join()
-        trigger_script_node.destroy_node()
+        emotion_detection_node.stop_event.set()
+        emotion_detection_node.thread_process.join()
+        emotion_detection_node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':

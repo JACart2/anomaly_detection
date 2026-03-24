@@ -17,7 +17,12 @@ llm:
   model: 'gpt-4o'
 
 ## TODO replace logic with ROSy way in sprint 3
-trigger_script: False
+## specify unique paths for required dependencies & node starting
+trigger_scripts: 
+- dummy_trigger
+- emotion_detection
+## where to monitorer for messages
+trigger_input_topic: "/trigger_messages"
 
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
