@@ -200,8 +200,8 @@ class AnomalyDetectionNode(Node):
             llm = LLMClient()
 
             response = llm.chat(full_payload)
+            self.get_logger().info(f"Model responded: {response}")
             decision = parse_llm_response(response)
-
             if decision.raw is None:
                 self.get_logger().error(
                     f"Line {sys._getframe().f_lineno}: [AAD] Malformed API response. Fallback used. Summary={decision.summary}"

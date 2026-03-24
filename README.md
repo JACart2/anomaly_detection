@@ -31,7 +31,7 @@ This provides two utility nodes: `fake_camera_data` and `lidar_test_node`. Both 
 This is the ROS2 node declaration for the anomaly detection system. `anomaly_detection_node.py` contains the manager that will handle API integration, data collection/processing, trigger integration, and alert publishing. 
 
 `config.yaml` contains system configuration.
-`llm_client.py` is the API integration.
+`llm_client.py` is the API integration. This has only been tested with OpenAI script. 
 `response_handler.py` standardizes API responses into a `Decision` type.
 
 ## System Diagrams
@@ -48,5 +48,7 @@ This is the ROS2 node declaration for the anomaly detection system. `anomaly_det
 Running this command: 
 `ros2 run anomaly_detection anomaly_detection_node`
 will start the anomaly detection node.
+
+This requires a .env file to exist in the same folder as the AAD node. It should have keys saved with the format **Provider-Name**_API_KEY=**Your-Key**.
 
 However, note the dependencies in prerequisites, and the specifications of `./anomaly_detection/anomaly_detection/config.yaml` for successful deloyment.
