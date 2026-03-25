@@ -25,6 +25,7 @@ class LLMClient:
         self.model_name = "gpt-4o"
         self.model = None
         self.api_base = None
+        self.system_prompt = None
 
         # Match the same config resolution style as anomaly_detection_node.py
         if config_path is None:
@@ -42,6 +43,7 @@ class LLMClient:
                     llm_cfg = data.get("llm", {})
                     self.provider = llm_cfg.get("model_provider", self.provider)
                     self.model_name = llm_cfg.get("model", self.model_name)
+                    self.system_prompt = llm_cfg.get("system_prompt", self.system_prompt)
                 else:
                     print("Config file loaded but is not a YAML mapping. Using defaults.")
             except Exception as e:
@@ -69,20 +71,31 @@ class LLMClient:
 
         response = litellm.completion(
             model=self.model,
-            messages =  [{
-                "role": "system",
-                "content": (
-                    "You are an anomaly detection assistant for a robot system. "
-                    "Analyze the provided log messages and respond ONLY with a JSON object. "
-                    "No markdown, no explanation, no code fences. "
-                    "Use exactly this format:\n"
-                    '{"anomaly": true/false, "severity": "low|medium|high|unknown", '
-                    '"action": "stop_cart|alert_admin|none", "summary": "brief explanation"}'
-                )
-            },
-            {"role": "user", "content": content}  # <-- your log payload goes here
+            messages =  [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": content}  # <-- your log payload goes here
             ],
             api_base=self.api_base,
         )
 
-        return response["choices"][0]["message"]["content"]
+        return response.choices[0].message.content
+    
+def main():
+    client = LLMClient()
+
+    # Test 1: text only
+    print("=== Text-only test ===")
+    response = client.chat("Motor encoder error: velocity mismatch detected at joint 3.")
+    print(response)
+
+    # Test 2: with a dummy image (random noise as stand-in for a real frame)
+    print("\n=== Image + text test ===")
+    dummy_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+    response = client.chat(
+        text="Analyze this frame for anomalies. No errors in the log.",
+        images=[dummy_image],
+    )
+    print(response)
+
+if __name__ == "__main__":
+    main()
