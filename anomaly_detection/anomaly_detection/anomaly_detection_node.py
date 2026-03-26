@@ -129,6 +129,9 @@ class AnomalyDetectionNode(Node):
 
         # Publisher for alerts
         self.alert_pub = self.create_publisher(String, self.alert_topic, 10)
+        
+        # Added for the config tests
+        self.decision_pub = self.create_publisher(String, "/aad/decisions", 10)
 
         # Subscribe to standardized logging topic
         self.subscription = self.create_subscription(
@@ -211,6 +214,15 @@ class AnomalyDetectionNode(Node):
                     f"[AAD] Parsed response: anomaly={decision.anomaly}, "
                     f"severity={decision.severity}, action={decision.action}, summary={decision.summary}"
                 )
+
+            #### Added for the config tests 
+            decision_msg = String()
+            decision_msg.data = (
+                f"anomaly={decision.anomaly} severity={decision.severity} "
+                f"action={decision.action} summary={decision.summary}"
+            )
+            self.decision_pub.publish(decision_msg)
+            ####
 
             if decision.anomaly:
                 alert = String()

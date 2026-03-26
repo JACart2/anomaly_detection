@@ -18,7 +18,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
-ALERT_TOPIC = "/aad/alerts"
+ALERT_TOPIC = "/aad/decisions"
 
 
 class AlertCollector(Node):
@@ -201,7 +201,12 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
 
     return all_results
 
-
+# Example Usage
+# python3 eval.py \
+#   --csv dataset_outline.csv \
+#   --configs configs/gpt4o.yaml configs/ollama.yaml \
+#   --bags /path/to/bags \
+#   --output results.json
 def main(args=None) -> None:
     parser = argparse.ArgumentParser(description="Eval AAD node across bags and configs.")
     parser.add_argument("--csv",     required=True,              help="Path to dataset_outline.csv")
