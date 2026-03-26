@@ -26,3 +26,15 @@ throttle_info: true
 info_min_period_sec: 0.1
 
 log_every_n_msgs: 1
+
+#Additional bagging info
+api_artifact_bagging_enabled: true
+api_artifact_output_dir: "/tmp/aad_api_bags"
+api_artifact_window_seconds: 3.0
+api_artifact_startup_delay_seconds: 0.5
+
+api_artifact_trigger_topic: "/aad/api_bag_trigger"
+api_artifact_cache_topic: "/aad/cache_snapshot"
+api_artifact_response_topic: "/aad/api_response"
+
+raw_history_max_items: 50
