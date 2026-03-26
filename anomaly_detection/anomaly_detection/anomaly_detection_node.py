@@ -4,12 +4,11 @@ Reads std anomaly messages, caches an LLM-friendly representation, periodically 
 Author: AAD Team Spring 26'
 Version: 3/22/2026
 """
+import importlib.util
 import os
 import sys
 import yaml
 import subprocess
-import threading
-import time
 
 import rclpy
 from std_msgs.msg import String as ROSString
@@ -63,18 +62,12 @@ class AnomalyDetectionNode(Node):
             Timer-driven callback that processes cached messages with the LLM, parses the response, and publishes alerts if anomalies are detected. 
             Clears the cache after processing.
 
-        _start_trigger_script():
-            Initializes and starts the trigger script if enabled. Runs the trigger script in a separate thread and monitors for anomaly messages from it.
+        trigger_message_callback():
+            Triggered when trigger_input_topic receives a message, adds to queue, triggers LLM call (since anomaly was found by trigger).
 
-        _monitor_trigger_script_anomalies():
-            Loop that runs in a separate thread to consume anomaly messages from the trigger script and add them to the cache for LLM processing.
-    
-        _stop_trigger_script():
-            Stops the trigger script monitoring thread gracefully.
-    
         _run_trigger_script_install():
-            Runs the installation script for the trigger script if the trigger script is enabled. Assumes install.sh is in the trigger_script subfolder and is executable.
-    
+            Run install.sh of respective trigger scripts and import modules to self.trigger_nodes.
+            
         _load_config():
             Loads configuration from a YAML file. Resolution order:
               AAD_CONFIG_PATH if set, config.yaml if not.
@@ -109,7 +102,7 @@ class AnomalyDetectionNode(Node):
         for trigger in self.triggers:
             self.get_logger().info(f"Configured trigger script: {trigger}")
             ## create list of node objects to add to executor in main.
-            self.trigger_nodes.append(self._run_trigger_script_install(trigger))
+            self._run_trigger_script_install(trigger)
 
         # Timing (safe defaults)
         self.api_frequency_seconds = float(self.config.get("api_frequency_seconds", 60.0))
@@ -138,7 +131,6 @@ class AnomalyDetectionNode(Node):
             10,
         )
 
-        ## TODO create trigger_message_callback that adds to queue.
         self.create_subscription(
             ROSString,
             self.trigger_input_topic,
@@ -234,9 +226,11 @@ class AnomalyDetectionNode(Node):
     def trigger_message_callback(self, msg: ROSString) -> None:
         self._msg_count += 1
         self.queue.add(msg.data)
-        self.llm_callback() 
+        self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
+        ## TODO uncomment for actual llm testing
+        ##self.llm_callback() 
         return
-    ## TODO import and return the node
+
     def _run_trigger_script_install(self, trigger: str) -> Node:
         """
         Run trigger script installation (from __init__). Assumes install.sh is in the trigger_script subfolder and is executable.
@@ -244,6 +238,7 @@ class AnomalyDetectionNode(Node):
         Args:
             trigger (str): The name of the trigger script to install. Should correspond to a subfolder in triggers/ with an install.sh script.
         """
+        ## install.sh for deps
         script_path = os.path.join(os.path.dirname(__file__), "triggers", trigger, "install.sh")
         if not os.path.isfile(script_path):
             self.get_logger().error(f"Line {sys._getframe().f_lineno}: install.sh not found at {script_path}")
@@ -254,7 +249,52 @@ class AnomalyDetectionNode(Node):
             self.get_logger().info("install.sh completed.")
         except subprocess.CalledProcessError as e:
             self.get_logger().error(f"Line {sys._getframe().f_lineno}: install.sh failed: {e}")
-        
+
+        ## import class and append to self.trigger_nodes
+        module_path = os.path.join(os.path.dirname(__file__), "triggers", trigger, f"{trigger}.py")
+        if not os.path.isfile(module_path):
+            self.get_logger().error(f"Line {sys._getframe().f_lineno}: Trigger module not found at {module_path}")
+            return None
+
+        module_name = f"aad_trigger_{trigger}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, module_path)
+            if spec is None or spec.loader is None:
+                self.get_logger().error(f"Line {sys._getframe().f_lineno}: Failed to load module spec for {module_path}")
+                return None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+        except Exception as e:
+            self.get_logger().error(f"Line {sys._getframe().f_lineno}: Failed to import trigger module {module_path}: {e}")
+            return None
+
+        class_name = "".join(part.capitalize() for part in trigger.split("_"))
+        trigger_cls = getattr(module, class_name, None)
+        if not isinstance(trigger_cls, type) or not issubclass(trigger_cls, Node):
+            trigger_cls = None
+            for obj in module.__dict__.values():
+                if isinstance(obj, type) and issubclass(obj, Node) and obj is not Node:
+                    trigger_cls = obj
+                    break
+
+        if trigger_cls is None:
+            self.get_logger().error(
+                f"Line {sys._getframe().f_lineno}: No ROS Node subclass found in {module_path}"
+            )
+            return None
+
+        try:
+            trigger_node = trigger_cls()
+        except Exception as e:
+            self.get_logger().error(
+                f"Line {sys._getframe().f_lineno}: Failed to instantiate trigger node {trigger_cls.__name__}: {e}"
+            )
+            return None
+
+        self.trigger_nodes.append(trigger_node)
+        return trigger_node
+
     def _load_config(self) -> dict:
         """
         Loads config.yaml from disk.

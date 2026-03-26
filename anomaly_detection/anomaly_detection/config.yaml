@@ -16,7 +16,6 @@ llm:
   model_provider: "openai"
   model: 'gpt-4o'
 
-## TODO replace logic with ROSy way in sprint 3
 ## specify unique paths for required dependencies & node starting
 trigger_scripts: 
 - dummy_trigger

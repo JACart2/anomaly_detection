@@ -4,11 +4,15 @@ Author: John Rosario Cruz
 Version: 3/9/2026
 """
 ## ROS2 packages
+import os
+import yaml
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
+from std_msgs.msg import String as ROSString
 
 ## Multi-Threading
 from threading import Thread
@@ -56,8 +60,6 @@ class EmotionDetection(Node):
 
         _emotion_lock (threading.Lock): A lock for managing access to the emotion_data list.
 
-        _anomaly_lock (threading.Lock): A lock for managing access to the
-
         anomaly_message (str): The message that is sent to the backend if an anomaly is detected. This is monitored by the main loop of the backend and triggers a response if not empty.
 
     Methods:
@@ -83,6 +85,8 @@ class EmotionDetection(Node):
         ## configure camera setup
         ## must match name of dir containing script
         super().__init__('emotion_detection')
+        config = self._load_config()
+        self.trigger_input_topic = config.get("trigger_input_topic", "/trigger_messages")
         self.bridge = CvBridge()
 
         # subscription
@@ -112,8 +116,7 @@ class EmotionDetection(Node):
 
         ## the error message that will be monitored and state management for message
         self._emotion_lock = threading.Lock()
-        self._anomaly_lock = threading.Lock()
-        self.anomaly_message = ""
+        self.publisher = self.create_publisher(ROSString, self.trigger_input_topic, 10)
 
     def listener_callback(self, msg: object) -> None:
         """Callback method that handles the incoming images from the ROS2 topic.
@@ -191,7 +194,9 @@ class EmotionDetection(Node):
         if average_confidence >= 50:
             if top_emotion in ["fear", "sad", "surprise", "angry", "disgust"]:
                 ## returning because something is bad
-                self._set_anomaly_message(f"Local model claims passenger is experiencing {top_emotion} at a {average_confidence}% confidence")
+                alert = ROSString()
+                alert.data = (f"emotion_detection trigger script claims passenger is experiencing {top_emotion} at a {average_confidence}% confidence")
+                self.publish_anomaly_message(alert)
 
     def process_frames(self) -> None:
         """Primary thread for processing frames from frame queue from main.
@@ -216,31 +221,33 @@ class EmotionDetection(Node):
                 with self._emotion_lock:
                     self.emotion_data.append(emotions['Passenger 1:'])
 
-    def _set_anomaly_message(self, msg: str) -> None:
-        """
-        Set the anomaly message attr in a thread-safe way.
-        
-        Args
-        ----
-            msg (str): the message to send to the anomaly_message attr.
+    def publish_anomaly_message(self, alert: ROSString) -> None:
+        self.publisher.publish(alert)
+        return
 
-        """
-        with self._anomaly_lock:
-            self.anomaly_message = msg
+    def _load_config(self) -> dict:
+        env_path = os.getenv("AAD_CONFIG_PATH")
+        if env_path and os.path.isfile(env_path):
+            config_path = env_path
+        else:
+            config_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "config.yaml")
+            )
 
-    def consume_anomaly_message(self) -> str:
-        """
-        Consume the anomaly message in a thread-safe way. This also clears the message after consumption.
-        
-        Returns
-        -------
-            str: The consumed anomaly message.
+        if not os.path.isfile(config_path):
+            self.get_logger().warn(f"Config file not found at {config_path}. Using defaults.")
+            return {}
 
-        """
-        with self._anomaly_lock:
-            msg = self.anomaly_message
-            self.anomaly_message = ""
-        return msg
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                self.get_logger().warn("Config file loaded but is not a YAML mapping. Using defaults.")
+                return {}
+            return data
+        except Exception as e:
+            self.get_logger().error(f"Failed to load config file {config_path}: {e}. Using defaults.")
+            return {}
 
 def main() -> None:
     """Main callpoint of the class.
