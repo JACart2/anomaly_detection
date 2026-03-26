@@ -69,6 +69,7 @@ class LLMClient:
                     }
                 )
 
+        litellm._turn_on_debug()
         response = litellm.completion(
             model=self.model,
             messages =  [

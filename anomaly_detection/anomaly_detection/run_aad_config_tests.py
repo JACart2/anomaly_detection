@@ -16,10 +16,11 @@ import argparse
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from dotenv import load_dotenv
 
 
 ALERT_TOPIC = "/aad/decisions"
-
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 class AlertCollector(Node):
     """
@@ -78,68 +79,63 @@ def parse_alert(alert_str: str) -> dict:
 
 
 def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> list:
-    """
-    Main evaluation loop. For each config, launches the AAD node with that config,
-    plays each bag file from the dataset CSV, collects alerts, and compares against
-    ground truth.
+    import time
+    import os
+    import csv
+    import subprocess
+    import threading
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
 
-    Args:
-        csv_path (str): Path to the dataset outline CSV file.
-        config_paths (list[str]): List of config.yaml paths to evaluate.
-        bags_dir (str): Directory containing the .mcap bag files.
-
-    Returns:
-        list[dict]: All per-bag results across all configs, each containing:
-                    config, bag_file, category, description, expected,
-                    detected, correct, and parsed alerts.
-    """
     rclpy.init()
     collector = AlertCollector()
 
-    # Spin the collector in a background thread so it can receive alerts
-    # while the main thread manages bag playback and evaluation logic
-    spin_thread = threading.Thread(target=rclpy.spin, args=(collector,), daemon=True)
+    # Use executor instead of raw rclpy.spin (more controllable)
+    executor = SingleThreadedExecutor()
+    executor.add_node(collector)
+
+    def spin():
+        executor.spin()
+
+    spin_thread = threading.Thread(target=spin, daemon=True)
     spin_thread.start()
 
-    with open(csv_path, newline="", encoding="utf-8") as f:
+    with open(csv_path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
 
     all_results = []
 
     for config_path in config_paths:
         abs_config = os.path.abspath(config_path)
+
         print(f"\n{'='*60}")
         print(f"Config: {abs_config}")
         print(f"{'='*60}")
 
-        # Pass config path via AAD_CONFIG_PATH so the node picks it up on startup
-        # without requiring ROS parameter changes (matches _load_config() resolution order)
         env = {**os.environ, "AAD_CONFIG_PATH": abs_config}
 
-        node_proc = subprocess.Popen(
-            ["ros2", "run", "anomaly_detection", "anomaly_detection_node"],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        for row in rows:
+            bag_file    = row["Bag file"].strip()
+            category    = row["Anomaly Category"].strip()
+            description = row["Description"].strip()
+            expected    = row["Anomalous"].strip()
+            bag_path    = os.path.join(bags_dir, bag_file)
 
-        try:
-            for row in rows:
-                bag_file    = row["Bag file"].strip()
-                category    = row["Anomaly Category"].strip()
-                description = row["Description"].strip()
-                expected    = row["Anomalous"].strip()  # "Yes" or "No"
-                bag_path    = os.path.join(bags_dir, bag_file)
+            if not os.path.exists(bag_path):
+                print(f"  ! Skipping — bag not found: {bag_path}")
+                continue
 
-                if not os.path.exists(bag_path):
-                    print(f"  ! Skipping — bag not found: {bag_path}")
-                    continue
+            # 🔹 Start fresh node per bag
+            node_proc = subprocess.Popen(
+                ["ros2", "run", "anomaly_detection", "anomaly_detection_node"],
+                env=env,
+            )
 
-                # Clear alerts from the previous bag before playing the next one
-                # so results are isolated per bag file
+            try:
                 collector.alerts.clear()
 
                 print(f"  Playing {bag_file}...", end=" ", flush=True)
+
                 bag_proc = subprocess.Popen(
                     ["ros2", "bag", "play", bag_path],
                     stdout=subprocess.DEVNULL,
@@ -147,19 +143,20 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                 )
                 bag_proc.wait()
 
-                # Brief pause after bag finishes to allow the LLM timer to fire
-                # and the alert to arrive on /aad/alerts before we check results.
-                # Increase this if api_frequency_seconds in the config is large.
-                time.sleep(1.0)
+                # 🔥 Wait up to 10s for alerts AFTER bag ends
+                start = time.time()
+                while time.time() - start < 10:
+                    if collector.alerts:
+                        break
+                    time.sleep(0.5)
 
-                # The AAD node only publishes to /aad/alerts when decision.anomaly
-                # is True, so no alerts = no anomaly detected
-                detected  = len(collector.alerts) > 0
-                correct   = detected == (expected == "Yes")
-                status    = "✓" if correct else "✗"
-                parsed    = [parse_alert(a) for a in collector.alerts]
+                detected = len(collector.alerts) > 0
+                correct  = detected == (expected == "Yes")
+                status   = "✓" if correct else "✗"
+                parsed   = [parse_alert(a) for a in collector.alerts]
 
                 print(f"{status} | expected={expected:3s} | detected={detected} | {category} — {description}")
+
                 if collector.alerts:
                     for a in collector.alerts:
                         print(f"      → {a}")
@@ -175,28 +172,38 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                     "alerts":      parsed,
                 })
 
-        finally:
-            # Always terminate the node process before moving to the next config
-            # to avoid stale subscriptions or duplicate alert publishers
-            node_proc.terminate()
-            node_proc.wait()
+            finally:
+                # 🔥 Always kill node cleanly
+                node_proc.terminate()
+                try:
+                    node_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    node_proc.kill()
 
+    # 🔹 Clean shutdown of ROS
+    executor.shutdown()
+    collector.destroy_node()
     rclpy.shutdown()
+    spin_thread.join(timeout=2)
 
-    # Print per-config summary with accuracy and confusion matrix counts
+    # 🔹 Summary
     print(f"\n{'='*60}")
     print("SUMMARY")
     print(f"{'='*60}")
+
     for config_path in config_paths:
         abs_config     = os.path.abspath(config_path)
         config_results = [r for r in all_results if r["config"] == abs_config]
-        total          = len(config_results)
+
+        total = len(config_results)
         if total == 0:
             continue
+
         correct = sum(r["correct"] for r in config_results)
         tp = sum(1 for r in config_results if r["detected"] and r["expected"] == "Yes")
         fp = sum(1 for r in config_results if r["detected"] and r["expected"] == "No")
         fn = sum(1 for r in config_results if not r["detected"] and r["expected"] == "Yes")
+
         print(f"  {os.path.basename(config_path)}: {correct}/{total} ({100*correct/total:.1f}%) | TP={tp} FP={fp} FN={fn}")
 
     return all_results
