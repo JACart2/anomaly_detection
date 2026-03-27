@@ -102,7 +102,11 @@ class AnomalyDetectionNode(Node):
         for trigger in self.triggers:
             self.get_logger().info(f"Configured trigger script: {trigger}")
             ## create list of node objects to add to executor in main.
-            self._run_trigger_script_install(trigger)
+            response = self._run_trigger_script_install(trigger)
+            if response != None:
+                self.trigger_nodes.append(self._run_trigger_script_install(trigger))
+            else:
+                self.get_logger().error(f"Line {sys._getframe().f_lineno}: Unable to load trigger script from AAD node")
 
         # Timing (safe defaults)
         self.api_frequency_seconds = float(self.config.get("api_frequency_seconds", 60.0))
@@ -242,13 +246,14 @@ class AnomalyDetectionNode(Node):
         script_path = os.path.join(os.path.dirname(__file__), "triggers", trigger, "install.sh")
         if not os.path.isfile(script_path):
             self.get_logger().error(f"Line {sys._getframe().f_lineno}: install.sh not found at {script_path}")
-            return
+            return None
 
         try:
             subprocess.run(["bash", script_path], cwd=os.path.dirname(script_path), check=True)
             self.get_logger().info("install.sh completed.")
         except subprocess.CalledProcessError as e:
             self.get_logger().error(f"Line {sys._getframe().f_lineno}: install.sh failed: {e}")
+            return None
 
         ## import class and append to self.trigger_nodes
         module_path = os.path.join(os.path.dirname(__file__), "triggers", trigger, f"{trigger}.py")
@@ -292,7 +297,6 @@ class AnomalyDetectionNode(Node):
             )
             return None
 
-        self.trigger_nodes.append(trigger_node)
         return trigger_node
 
     def _load_config(self) -> dict:
