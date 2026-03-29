@@ -3,7 +3,7 @@ Iterates over a dataset CSV and a list of config files, plays each bag file,
 collects alerts from /aad/alerts, and compares against ground truth labels.
 
 Author: AAD Team Spring 26'
-Version: 3/22/2026
+Version: 3/22/2026 (FIXED)
 """
 import os
 import csv
@@ -87,19 +87,6 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
 
-    rclpy.init()
-    collector = AlertCollector()
-
-    # Use executor instead of raw rclpy.spin (more controllable)
-    executor = SingleThreadedExecutor()
-    executor.add_node(collector)
-
-    def spin():
-        executor.spin()
-
-    spin_thread = threading.Thread(target=spin, daemon=True)
-    spin_thread.start()
-
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
 
@@ -125,6 +112,17 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                 print(f"  ! Skipping — bag not found: {bag_path}")
                 continue
 
+            rclpy.init()
+            collector = AlertCollector()
+            executor = SingleThreadedExecutor()
+            executor.add_node(collector)
+
+            def spin():
+                executor.spin()
+
+            spin_thread = threading.Thread(target=spin, daemon=True)
+            spin_thread.start()
+
             # 🔹 Start fresh node per bag
             node_proc = subprocess.Popen(
                 ["ros2", "run", "anomaly_detection", "anomaly_detection_node"],
@@ -132,8 +130,6 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
             )
 
             try:
-                collector.alerts.clear()
-
                 print(f"  Playing {bag_file}...", end=" ", flush=True)
 
                 bag_proc = subprocess.Popen(
@@ -143,7 +139,6 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                 )
                 bag_proc.wait()
 
-                # 🔥 Wait up to 10s for alerts AFTER bag ends
                 start = time.time()
                 while time.time() - start < 10:
                     if collector.alerts:
@@ -173,18 +168,17 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                 })
 
             finally:
-                # 🔥 Always kill node cleanly
                 node_proc.terminate()
                 try:
                     node_proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     node_proc.kill()
 
-    # 🔹 Clean shutdown of ROS
-    executor.shutdown()
-    collector.destroy_node()
-    rclpy.shutdown()
-    spin_thread.join(timeout=2)
+                # 🔹 Clean shutdown of ROS for THIS bag
+                executor.shutdown()
+                collector.destroy_node()
+                rclpy.shutdown()
+                spin_thread.join(timeout=2)
 
     # 🔹 Summary
     print(f"\n{'='*60}")
