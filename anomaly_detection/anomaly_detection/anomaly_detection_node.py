@@ -104,7 +104,7 @@ class AnomalyDetectionNode(Node):
             ## create list of node objects to add to executor in main.
             response = self._run_trigger_script_install(trigger)
             if response != None:
-                self.trigger_nodes.append(self._run_trigger_script_install(trigger))
+                self.trigger_nodes.append(response)
             else:
                 self.get_logger().error(f"Line {sys._getframe().f_lineno}: Unable to load trigger script from AAD node")
 
