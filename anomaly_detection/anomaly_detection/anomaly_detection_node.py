@@ -1,20 +1,17 @@
 """Central manager for AI Anomaly Detection node.
 
 Handles API integration, trigger method integration, response handling,
-and API-triggered artifact bagging.
+and lightweight API artifact capture.
 
 Reads std anomaly messages, caches an LLM-friendly representation,
 periodically calls the LLM/API, parses results, and publishes alerts.
 
-When enabled through config, each API invocation also creates a rosbag
-artifact containing:
-- trigger event
-- cache snapshot
-- API response
-- raw input topic data during the capture window
+Each time the LLM is called, the node writes a JSON artifact containing:
+- cached_data
+- api_response
 
 Author: AAD Team Spring 26'
-Version: 3/26/2026
+Version: 3/31/2026
 """
 
 import json
@@ -62,12 +59,7 @@ class AnomalyDetectionNode(Node):
         log_every_n_msgs (int): How often to print received count logs.
         alert_pub (Publisher): Publisher for anomaly alerts.
 
-        api_artifact_bagging_enabled (bool): Enables API-triggered rosbagging.
-        api_artifact_output_dir (str): Directory to store generated bag files.
-        api_artifact_window_seconds (float): Recording window after API response.
-        api_bag_trigger_pub (Publisher): Publishes bag-trigger events.
-        api_cache_pub (Publisher): Publishes cache snapshots.
-        api_response_pub (Publisher): Publishes API responses.
+        api_artifact_output_dir (str): Directory to store generated JSON artifacts.
     """
 
     def __init__(self):
@@ -103,32 +95,10 @@ class AnomalyDetectionNode(Node):
         self._msg_count = 0
         self.log_every_n_msgs = int(self.config.get("log_every_n_msgs", 50))
 
-        # Artifact bagging config
-        self.api_artifact_bagging_enabled = bool(
-            self.config.get("api_artifact_bagging_enabled", False)
-        )
+        # JSON artifact output config
         self.api_artifact_output_dir = self.config.get(
             "api_artifact_output_dir",
-            "/tmp/aad_api_bags",
-        )
-        self.api_artifact_window_seconds = float(
-            self.config.get("api_artifact_window_seconds", 3.0)
-        )
-        self.api_artifact_startup_delay_seconds = float(
-            self.config.get("api_artifact_startup_delay_seconds", 0.5)
-        )
-
-        self.api_artifact_trigger_topic = self.config.get(
-            "api_artifact_trigger_topic",
-            "/aad/api_bag_trigger",
-        )
-        self.api_artifact_cache_topic = self.config.get(
-            "api_artifact_cache_topic",
-            "/aad/cache_snapshot",
-        )
-        self.api_artifact_response_topic = self.config.get(
-            "api_artifact_response_topic",
-            "/aad/api_response",
+            "/tmp/aad_api_artifacts",
         )
 
         # Trigger script setup
@@ -138,15 +108,6 @@ class AnomalyDetectionNode(Node):
 
         # Publishers
         self.alert_pub = self.create_publisher(String, self.alert_topic, 10)
-        self.api_bag_trigger_pub = self.create_publisher(
-            String, self.api_artifact_trigger_topic, 10
-        )
-        self.api_cache_pub = self.create_publisher(
-            String, self.api_artifact_cache_topic, 10
-        )
-        self.api_response_pub = self.create_publisher(
-            String, self.api_artifact_response_topic, 10
-        )
 
         # Subscription to standardized logging topic
         self.subscription = self.create_subscription(
@@ -169,9 +130,7 @@ class AnomalyDetectionNode(Node):
             f"cache_max_items={self.cache_max_items}, "
             f"throttle_info={self.throttle_info}, "
             f"info_min_period_sec={self.info_min_period_sec}, "
-            f"api_artifact_bagging_enabled={self.api_artifact_bagging_enabled}, "
-            f"api_artifact_output_dir={self.api_artifact_output_dir}, "
-            f"api_artifact_window_seconds={self.api_artifact_window_seconds}"
+            f"api_artifact_output_dir={self.api_artifact_output_dir}"
         )
 
     def _generate_artifact_id(self) -> str:
@@ -179,104 +138,37 @@ class AnomalyDetectionNode(Node):
         stamp_ns = self.get_clock().now().nanoseconds
         return f"api_artifact_{stamp_ns}"
 
-    def _start_api_artifact_bag_recording(self, artifact_id: str):
+    def _write_api_artifact(self, artifact_id: str, cached_data: list[str], api_response: str) -> str | None:
         """
-        Start a short-lived rosbag recording process for API artifact capture.
+        Write a lightweight JSON artifact for a single LLM invocation.
 
-        Returns
-        -------
-            tuple[subprocess.Popen | None, str | None]
-                The process handle and bag output path.
+        The artifact contains the cached data sent to the LLM and the raw
+        response returned by the LLM.
         """
         try:
             os.makedirs(self.api_artifact_output_dir, exist_ok=True)
-            bag_path = os.path.join(self.api_artifact_output_dir, artifact_id)
-
-            topics = [
-                self.raw_input_topic,
-                self.api_artifact_trigger_topic,
-                self.api_artifact_cache_topic,
-                self.api_artifact_response_topic,
-            ]
-
-            cmd = ["ros2", "bag", "record", "-o", bag_path] + topics
-
-            self.get_logger().info(
-                f"Starting API artifact bag recording: {' '.join(cmd)}"
+            artifact_path = os.path.join(
+                self.api_artifact_output_dir,
+                f"{artifact_id}.json",
             )
 
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return proc, bag_path
+            payload = {
+                "artifact_id": artifact_id,
+                "timestamp_ns": self.get_clock().now().nanoseconds,
+                "cached_data": cached_data,
+                "api_response": api_response,
+            }
+
+            with open(artifact_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+
+            return artifact_path
 
         except Exception as e:
             self.get_logger().error(
-                f"Line {sys._getframe().f_lineno}: Failed to start rosbag recording: {e}"
+                f"Line {sys._getframe().f_lineno}: Failed to write API artifact JSON: {e}"
             )
-            return None, None
-
-    def _stop_api_artifact_bag_recording(self, proc) -> None:
-        """Stop a rosbag recording process safely."""
-        if proc is None:
-            return
-
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.get_logger().warn(
-                "rosbag record did not stop in time. Killing process."
-            )
-            proc.kill()
-        except Exception as e:
-            self.get_logger().error(
-                f"Line {sys._getframe().f_lineno}: Failed to stop rosbag recording cleanly: {e}"
-            )
-
-    def _publish_api_trigger(self, artifact_id: str) -> None:
-        """Publish an API invocation trigger message."""
-        msg = String()
-        msg.data = json.dumps(
-            {
-                "artifact_id": artifact_id,
-                "event": "api_invoked",
-                "timestamp_ns": self.get_clock().now().nanoseconds,
-            }
-        )
-        self.api_bag_trigger_pub.publish(msg)
-
-    def _publish_cache_snapshot(self, artifact_id: str, raw_list: list[str]) -> None:
-        """Publish the current cache snapshot to a topic for bag capture."""
-        msg = String()
-        msg.data = json.dumps(
-            {
-                "artifact_id": artifact_id,
-                "timestamp_ns": self.get_clock().now().nanoseconds,
-                "cached_data": raw_list,
-            }
-        )
-        self.api_cache_pub.publish(msg)
-
-    def _publish_api_response(self, artifact_id: str, response: str, decision) -> None:
-        """Publish the API response and parsed decision to a topic for bag capture."""
-        msg = String()
-        msg.data = json.dumps(
-            {
-                "artifact_id": artifact_id,
-                "timestamp_ns": self.get_clock().now().nanoseconds,
-                "response": response,
-                "decision": {
-                    "anomaly": decision.anomaly,
-                    "severity": decision.severity,
-                    "action": decision.action,
-                    "summary": decision.summary,
-                },
-            }
-        )
-        self.api_response_pub.publish(msg)
+            return None
 
     def log_caching_callback(self, msg: AnomalyMsg) -> None:
         """
@@ -330,13 +222,10 @@ class AnomalyDetectionNode(Node):
         Flow
         ----
         - snapshot cache
-        - optionally start artifact bag recording
-        - publish trigger event
         - call LLM/API
+        - write a JSON artifact containing cached_data and api_response
         - parse with response handler
-        - publish cache snapshot and API response for artifact capture
         - publish alert if anomaly
-        - stop bag recording
         - clear cache
         """
         raw_list = self.queue.snapshot()
@@ -346,22 +235,15 @@ class AnomalyDetectionNode(Node):
 
         full_payload = "\n".join(raw_list)
 
-        artifact_id = None
-        bag_proc = None
-        bag_path = None
-
         try:
-            if self.api_artifact_bagging_enabled:
-                artifact_id = self._generate_artifact_id()
-                bag_proc, bag_path = self._start_api_artifact_bag_recording(artifact_id)
-
-                if bag_proc is not None:
-                    time.sleep(self.api_artifact_startup_delay_seconds)
-                    self._publish_api_trigger(artifact_id)
-
             llm = LLMClient()
             response = llm.chat(full_payload)
             self.get_logger().info(f"Model responded: {response}")
+
+            artifact_id = self._generate_artifact_id()
+            artifact_path = self._write_api_artifact(artifact_id, raw_list, response)
+            if artifact_path is not None:
+                self.get_logger().info(f"API artifact JSON saved to: {artifact_path}")
 
             decision = parse_llm_response(response)
 
@@ -382,13 +264,6 @@ class AnomalyDetectionNode(Node):
                     f"summary={decision.summary}"
                 )
 
-            if self.api_artifact_bagging_enabled and artifact_id is not None and bag_proc is not None:
-                self._publish_cache_snapshot(artifact_id, raw_list)
-                self._publish_api_response(artifact_id, response, decision)
-
-                # Keep recording briefly so the bag definitely captures the published topics
-                time.sleep(self.api_artifact_window_seconds)
-
             if decision.anomaly:
                 alert = String()
                 alert.data = (
@@ -404,11 +279,6 @@ class AnomalyDetectionNode(Node):
             )
 
         finally:
-            if bag_proc is not None:
-                self._stop_api_artifact_bag_recording(bag_proc)
-                if bag_path is not None:
-                    self.get_logger().info(f"API artifact bag saved to: {bag_path}")
-
             self.queue.clear()
 
     def _start_trigger_script(self) -> None:
