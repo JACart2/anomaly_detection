@@ -98,7 +98,7 @@ class AnomalyDetectionNode(Node):
         # JSON artifact output config
         self.api_artifact_output_dir = self.config.get(
             "api_artifact_output_dir",
-            "/tmp/aad_api_artifacts",
+            "/tmp/aad_api_bags",
         )
 
         # Trigger script setup
