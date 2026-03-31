@@ -229,40 +229,38 @@ class AnomalyDetectionNode(Node):
         - clear cache
         """
         raw_list = self.queue.snapshot()
+
         if not raw_list:
-            self.get_logger().info("No cached log messages yet.")
             return
 
         full_payload = "\n".join(raw_list)
 
+        temp_api_response = None
+
         try:
             llm = LLMClient()
             response = llm.chat(full_payload)
-            self.get_logger().info(f"Model responded: {response}")
+            temp_api_response = response
 
-            artifact_id = self._generate_artifact_id()
-            artifact_path = self._write_api_artifact(artifact_id, raw_list, response)
-            if artifact_path is not None:
-                self.get_logger().info(f"API artifact JSON saved to: {artifact_path}")
+        except Exception as e:
+            self.get_logger().warn(
+                f"[AAD] LLM call failed (likely missing API key). Using mock response for testing: {e}"
+            )
 
-            decision = parse_llm_response(response)
+            temp_api_response = json.dumps({
+                "anomaly": False,
+                "severity": "low",
+                "action": "none",
+                "summary": "Mock response used for artifact testing"
+            })
 
-            if decision.raw is None:
-                self.get_logger().error(
-                    f"Line {sys._getframe().f_lineno}: [AAD] Malformed API response. "
-                    f"Fallback used. Summary={decision.summary}"
-                )
-            elif decision.action == "none" and decision.severity == "unknown":
-                self.get_logger().warn(
-                    f"Line {sys._getframe().f_lineno}: [AAD] Validation failed. "
-                    f"Fallback used. Summary={decision.summary}"
-                )
-            else:
-                self.get_logger().info(
-                    f"[AAD] Parsed response: anomaly={decision.anomaly}, "
-                    f"severity={decision.severity}, action={decision.action}, "
-                    f"summary={decision.summary}"
-                )
+        # Create artifact even if API failed
+        artifact_id = self._generate_artifact_id()
+        self._write_api_artifact(artifact_id, raw_list, temp_api_response)
+
+        # Try parsing decision if possible
+        try:
+            decision = parse_llm_response(temp_api_response)
 
             if decision.anomaly:
                 alert = String()
@@ -273,13 +271,11 @@ class AnomalyDetectionNode(Node):
                 self.alert_pub.publish(alert)
 
         except Exception as e:
-            self.get_logger().error(
-                f"Line {sys._getframe().f_lineno}: [AAD] Exception during API "
-                f"call/handling: {e}. Safe fallback: no action."
+            self.get_logger().warn(
+                f"[AAD] Could not parse decision during testing: {e}"
             )
 
-        finally:
-            self.queue.clear()
+        self.queue.clear()
 
     def _start_trigger_script(self) -> None:
         """
