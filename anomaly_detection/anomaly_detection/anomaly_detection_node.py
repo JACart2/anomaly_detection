@@ -162,6 +162,8 @@ class AnomalyDetectionNode(Node):
             with open(artifact_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
 
+            self.get_logger().info(f"[AAD] JSON artifact created at: {artifact_path}")
+            self.get_logger().info(json.dumps(payload, indent=2))
             return artifact_path
 
         except Exception as e:
