@@ -12,9 +12,17 @@ cache_max_age_seconds: 30
 # Args:
 #   model_provider: Name of model provider 
 #   model: Name of specific model
+#   system_prompt: The system prompt passed to the llm 
 llm: 
   model_provider: "openai"
   model: 'gpt-4o'
+  system_prompt: >-
+    You are an anomaly detection assistant for a robot system.
+    Analyze the provided log messages and respond ONLY with a JSON object.
+    No markdown, no explanation, no code fences.
+    Use exactly this format:
+    {"anomaly": true/false, "severity": "low|medium|high|unknown",
+    "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
 
 ## specify unique paths for required dependencies & node starting
 trigger_scripts: 
