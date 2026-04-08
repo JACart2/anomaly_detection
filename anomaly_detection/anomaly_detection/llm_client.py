@@ -58,7 +58,7 @@ class LLMClient:
 
     def _run_ollama_model(self, model_name):
         subprocess.run(
-            ["ollama", "run", model_name, "--format json"],
+            ["ollama", "run", model_name],
             check=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -140,6 +140,16 @@ class LLMClient:
 
         
         message = response.message.content
+        print('-----')
+
+        print('-----')
+        print('-----')
+        print(type(message))
+        print(message)
+        print('-----')
+        print('-----')
+        print('-----')
+
         return message
     
 def main():
