@@ -138,8 +138,9 @@ class LLMClient:
         finally:
             self._stop_ollama_model(model_name)
 
-        message = response.get("message", {}) if isinstance(response, dict) else {}
-        return message.get("content", "").get("solution", "")
+        
+        message = response.message.content
+        return message
     
 def main():
     client = LLMClient()

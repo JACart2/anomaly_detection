@@ -18,7 +18,8 @@ llm:
   model: 'mistral-nemo'
   local: true
   system_prompt: >-
-    You are an anomaly detection assistant for a robot system.
+    You are an anomaly detection assistant for an autonomous vehicle system.
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs
     Analyze the provided log messages and respond ONLY with a JSON object.
     No markdown, no explanation, no code fences.
     Use exactly this format:
@@ -28,7 +29,6 @@ llm:
 ## specify unique paths for required dependencies & node starting
 trigger_scripts: 
 - dummy_trigger
-- emotion_detection
 ## where to monitorer for messages
 trigger_input_topic: "/trigger_messages"
 
