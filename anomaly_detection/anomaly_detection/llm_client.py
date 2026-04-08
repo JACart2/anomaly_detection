@@ -4,6 +4,8 @@ import yaml
 from io import BytesIO
 from PIL import Image
 import base64
+import subprocess
+from ollama import Client
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -54,6 +56,24 @@ class LLMClient:
         self.model = f"{self.provider}/{self.model_name}"
         self.api_base = os.getenv(f"{self.provider.upper()}_API_BASE", None)
 
+    def _run_ollama_model(self, model_name):
+        subprocess.run(
+            ["ollama", "run", model_name, "--format json"],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _stop_ollama_model(self, model_name):
+        subprocess.run(
+            ["ollama", "stop", model_name],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
     def chat(self, text, images=None):
         content = [{"type": "text", "text": text}]
 
@@ -80,6 +100,31 @@ class LLMClient:
         )
 
         return response.choices[0].message.content
+
+    def local_chat(self, text, images=None):
+        model_name = self.model_name
+        messages = []
+
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+
+        user_message = {"role": "user", "content": text}
+        if images:
+            user_message["images"] = [encode_image(img) for img in images]
+
+        messages.append(user_message)
+
+        self._run_ollama_model(model_name)
+        try:
+            client = Client(
+                host="http://localhost:11434"
+            )
+            response = client.chat(model=model_name, messages=messages)
+        finally:
+            self._stop_ollama_model(model_name)
+
+        message = response.get("message", {}) if isinstance(response, dict) else {}
+        return message.get("content", "").get("solution", "")
     
 def main():
     client = LLMClient()
@@ -91,12 +136,12 @@ def main():
 
     # Test 2: with a dummy image (random noise as stand-in for a real frame)
     print("\n=== Image + text test ===")
-    dummy_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    response = client.chat(
-        text="Analyze this frame for anomalies. No errors in the log.",
-        images=[dummy_image],
-    )
-    print(response)
+    # dummy_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+    # response = client.chat(
+    #     text="Analyze this frame for anomalies. No errors in the log.",
+    #     images=[dummy_image],
+    # )
+    # print(response)
 
 if __name__ == "__main__":
     main()

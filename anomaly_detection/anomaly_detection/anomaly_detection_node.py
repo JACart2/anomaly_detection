@@ -109,6 +109,7 @@ class AnomalyDetectionNode(Node):
 
         # Load config once on startup
         self.config = self._load_config()
+        self.llm_local = bool(self.config.get("llm", {}).get("local", False))
 
         # Standard topic defaults
         self.trigger_input_topic = self.config.get("trigger_input_topic", "/trigger_messages")
@@ -291,33 +292,26 @@ class AnomalyDetectionNode(Node):
             return
 
         full_payload = "\n".join(raw_list)
-
-        temp_api_response = None
-
+        response = ""
         try:
             llm = LLMClient()
-            response = llm.chat(full_payload)
-            temp_api_response = response
+            if self.llm_local:
+                response = llm.local_chat(full_payload)
+            else:
+                response = llm.chat(full_payload)
 
         except Exception as e:
             self.get_logger().warn(
-                f"[AAD] LLM call failed (likely missing API key). Using mock response for testing: {e}"
+                f"[AAD] LLM call failed. See: {e}"
             )
-
-            temp_api_response = json.dumps({
-                "anomaly": False,
-                "severity": "low",
-                "action": "none",
-                "summary": "Mock response used for artifact testing"
-            })
 
         # Create artifact even if API failed
         artifact_id = self._generate_artifact_id()
-        self._write_api_artifact(artifact_id, raw_list, temp_api_response)
+        self._write_api_artifact(artifact_id, raw_list, response)
 
         # Try parsing decision if possible
         try:
-            decision = parse_llm_response(temp_api_response)
+            decision = parse_llm_response(response)
 
             #### Added for the config tests 
             decision_msg = String()

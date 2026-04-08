@@ -14,8 +14,9 @@ cache_max_age_seconds: 30
 #   model: Name of specific model
 #   system_prompt: The system prompt passed to the llm 
 llm: 
-  model_provider: "openai"
-  model: 'gpt-4o'
+  model_provider: "mistral"
+  model: 'mistral-nemo'
+  local: true
   system_prompt: >-
     You are an anomaly detection assistant for a robot system.
     Analyze the provided log messages and respond ONLY with a JSON object.

@@ -34,6 +34,8 @@ This is the ROS2 node declaration for the anomaly detection system. `anomaly_det
 `llm_client.py` is the API integration. This has only been tested with OpenAI script. 
 `response_handler.py` standardizes API responses into a `Decision` type.
 
+`./triggers` must contain ./{TRIGGER}/{TRIGGER}.py that contains a valid ROS2 node & install.sh for dep installation.
+
 ## System Diagrams
 
 ### Architecture Diagram
