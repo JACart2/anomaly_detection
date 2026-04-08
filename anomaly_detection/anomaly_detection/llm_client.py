@@ -102,6 +102,21 @@ class LLMClient:
         return response.choices[0].message.content
 
     def local_chat(self, text, images=None):
+        """
+        Ping an Ollama hosted model given some data.
+        REQUIRES ollama run <MODEL> on same network
+        
+        Args
+        ----
+            text (str): text data
+
+            images (list): list of numpy image arrays 
+        
+        Returns
+        -------
+            str: the models response
+        
+        """
         model_name = self.model_name
         messages = []
 
