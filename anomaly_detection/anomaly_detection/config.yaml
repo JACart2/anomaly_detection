@@ -15,12 +15,13 @@ cache_max_age_seconds: 30
 #   system_prompt: The system prompt passed to the llm 
 llm: 
   model_provider: "mistral"
-  model: 'mistral-nemo'
+  model: 'mistral-small'
   local: true
   system_prompt: >-
-    You are an anomaly detection assistant for a robot system.
-    Analyze the provided log messages and respond ONLY with a JSON object.
-    No markdown, no explanation, no code fences.
+    You are an anomaly detection assistant for an autonomous vehicle system.
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs
+    Analyze the provided log messages and respond ONLY with a JSON object. 
+    No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
     Use exactly this format:
     {"anomaly": true/false, "severity": "low|medium|high|unknown",
     "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
@@ -28,7 +29,6 @@ llm:
 ## specify unique paths for required dependencies & node starting
 trigger_scripts: 
 - dummy_trigger
-- emotion_detection
 ## where to monitorer for messages
 trigger_input_topic: "/trigger_messages"
 
