@@ -11,13 +11,14 @@ Each time the LLM is called, the node writes a JSON artifact containing:
 - api_response
 
 Author: AAD Team Spring 26'
-Version: 3/31/2026
+Version: 4/12/2026
 """
 import importlib.util
 
 import json
 import os
 import subprocess
+import time
 
 from std_msgs.msg import String as ROSString
 import sys
@@ -33,6 +34,7 @@ from std_msgs.msg import String
 from anomaly_detection.llm_client import LLMClient
 from anomaly_detection.response_handler import parse_llm_response
 from anomaly_detection.StringRingBuffer import StringRingBuffer
+from ollama import Client
 
 
 class AnomalyDetectionNode(Node):
@@ -110,6 +112,7 @@ class AnomalyDetectionNode(Node):
         # Load config once on startup
         self.config = self._load_config()
         self.llm_local = bool(self.config.get("llm", {}).get("local", False))
+        self._ollama_proc = None
 
         # Standard topic defaults
         self.trigger_input_topic = self.config.get("trigger_input_topic", "/trigger_messages")
@@ -178,6 +181,15 @@ class AnomalyDetectionNode(Node):
 
         self.create_timer(self.api_frequency_seconds, self.llm_callback)
 
+        # Start local Ollama once, before first inference
+        if self.llm_local:
+            self._start_local_ollama()
+            self._wait_for_ollama_ready()
+            self._warm_local_model()
+
+        # Create one reusable client
+        self.llm = LLMClient()
+
         self.get_logger().info(
             "AAD node started with config: "
             f"raw_input_topic={self.raw_input_topic}, "
@@ -187,6 +199,54 @@ class AnomalyDetectionNode(Node):
             f"throttle_info={self.throttle_info}, "
             f"info_min_period_sec={self.info_min_period_sec}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
+        )
+
+    def _start_local_ollama(self) -> None:
+        if self._ollama_proc is not None and self._ollama_proc.poll() is None:
+            return
+
+        env = os.environ.copy()
+        env.setdefault("OLLAMA_HOST", "127.0.0.1:11434")
+
+        self.get_logger().info("Starting local Ollama server...")
+        self._ollama_proc = subprocess.Popen(
+            ["ollama", "serve"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def _wait_for_ollama_ready(self, timeout_sec: float = 30.0) -> None:
+        deadline = time.time() + timeout_sec
+        client = Client(host="http://localhost:11434")
+
+        last_err = None
+        while time.time() < deadline:
+            if self._ollama_proc is not None and self._ollama_proc.poll() is not None:
+                raise RuntimeError("ollama serve exited before becoming ready")
+
+            try:
+                client.list()
+                self.get_logger().info("Ollama API is ready.")
+                return
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+
+        raise RuntimeError(f"Ollama API did not become ready within {timeout_sec}s: {last_err}")
+
+    def _warm_local_model(self) -> None:
+        model_name = self.config.get("llm", {}).get("model", "mistral-small")
+        client = Client(host="http://localhost:11434")
+
+        self.get_logger().info(f"Warming Ollama model: {model_name}")
+        client.chat(
+            model=model_name,
+            messages=[{"role": "user", "content": "ping"}],
+            stream=False,
+            keep_alive="30m",
+            options={"temperature": 0, "num_predict": 1},
         )
 
     def _generate_artifact_id(self) -> str:
@@ -294,11 +354,11 @@ class AnomalyDetectionNode(Node):
         full_payload = "\n".join(raw_list)
         response = ""
         try:
-            llm = LLMClient()
+            
             if self.llm_local:
-                response = llm.local_chat(full_payload)
+                response = self.llm.local_chat(full_payload)
             else:
-                response = llm.chat(full_payload)
+                response = self.llm.chat(full_payload)
 
         except Exception as e:
             self.get_logger().warn(
@@ -478,6 +538,16 @@ class AnomalyDetectionNode(Node):
             return "DATA"
         return "TEXT"
 
+    def _stop_local_ollama(self) -> None:
+        if self._ollama_proc is not None and self._ollama_proc.poll() is None:
+            self.get_logger().info("Stopping local Ollama server...")
+            self._ollama_proc.terminate()
+            try:
+                self._ollama_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._ollama_proc.kill()
+                self._ollama_proc.wait(timeout=5)
+
     def _format_for_llm(self, m: AnomalyMsg) -> str:
         """
         Convert an AnomalyMsg into a compact, LLM-friendly string representation.
@@ -543,6 +613,9 @@ def main(args=None) -> None:
             for trigger_node in node.trigger_nodes:
                 trigger_node.destroy_node()
 
+        # stop ollama first
+        if hasattr(node, "_stop_local_ollama"):
+            node._stop_local_ollama()
         node.destroy_node()
         executor.shutdown()
         rclpy.shutdown()

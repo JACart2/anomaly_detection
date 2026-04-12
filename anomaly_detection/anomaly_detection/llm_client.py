@@ -4,7 +4,6 @@ import yaml
 from io import BytesIO
 from PIL import Image
 import base64
-import subprocess
 from ollama import Client
 from dotenv import load_dotenv
 
@@ -41,7 +40,6 @@ class LLMClient:
                     data = yaml.safe_load(f) or {}
 
                 if isinstance(data, dict):
-                    print(data)
                     llm_cfg = data.get("llm", {})
                     self.provider = llm_cfg.get("model_provider", self.provider)
                     self.model_name = llm_cfg.get("model", self.model_name)
@@ -55,25 +53,7 @@ class LLMClient:
 
         self.model = f"{self.provider}/{self.model_name}"
         self.api_base = os.getenv(f"{self.provider.upper()}_API_BASE", None)
-
-    def _run_ollama_model(self, model_name):
-        subprocess.run(
-            ["ollama", "run", model_name],
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-    def _stop_ollama_model(self, model_name):
-        subprocess.run(
-            ["ollama", "stop", model_name],
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
+        
     def chat(self, text, images=None):
         content = [{"type": "text", "text": text}]
 
@@ -104,7 +84,6 @@ class LLMClient:
     def local_chat(self, text, images=None):
         """
         Ping an Ollama hosted model given some data.
-        REQUIRES ollama run <MODEL> on same network
         
         Args
         ----
@@ -117,7 +96,6 @@ class LLMClient:
             str: the models response
         
         """
-        model_name = self.model_name
         messages = []
 
         if self.system_prompt:
@@ -129,28 +107,16 @@ class LLMClient:
 
         messages.append(user_message)
 
-        self._run_ollama_model(model_name)
-        try:
-            client = Client(
-                host="http://localhost:11434"
-            )
-            response = client.chat(model=model_name, messages=messages)
-        finally:
-            self._stop_ollama_model(model_name)
+        client = Client(host="http://localhost:11434")
+        response = client.chat(
+            model=self.model_name,
+            messages=messages,
+            stream=False,
+            format="json",
+            keep_alive="30m",
+        )
 
-        
-        message = response.message.content
-        print('-----')
-
-        print('-----')
-        print('-----')
-        print(type(message))
-        print(message)
-        print('-----')
-        print('-----')
-        print('-----')
-
-        return message
+        return response.message.content
     
 def main():
     client = LLMClient()
