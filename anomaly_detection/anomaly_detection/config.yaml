@@ -15,7 +15,7 @@ cache_max_age_seconds: 30
 #   system_prompt: The system prompt passed to the llm 
 llm: 
   model_provider: "mistral"
-  model: 'mistral-small'
+  model: 'mistral'
   local: true
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
@@ -41,6 +41,7 @@ info_min_period_sec: 0.1
 log_every_n_msgs: 1
 
 #Additional bagging info
+## ENSURE this matches volume in config.yaml for leaving this behind on host.
 api_artifact_output_dir: "/tmp/aad_api_bags"
 
 raw_history_max_items: 50
