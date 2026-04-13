@@ -41,7 +41,6 @@ info_min_period_sec: 0.1
 log_every_n_msgs: 1
 
 #Additional bagging info
-## ENSURE this matches volume in config.yaml for leaving this behind on host.
-api_artifact_output_dir: "/tmp/aad_api_bags"
+api_artifact_output_dir: "/root/dev_ws/src/anomaly_detection/logs"
 
 raw_history_max_items: 50
