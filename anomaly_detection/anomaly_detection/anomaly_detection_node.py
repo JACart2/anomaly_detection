@@ -217,7 +217,7 @@ class AnomalyDetectionNode(Node):
             stderr=subprocess.DEVNULL,
         )
 
-    def _wait_for_ollama_ready(self, timeout_sec: float = 30.0) -> None:
+    def _wait_for_ollama_ready(self, timeout_sec: float = 15.0) -> None:
         deadline = time.time() + timeout_sec
         client = Client(host="http://localhost:11434")
 
@@ -245,7 +245,7 @@ class AnomalyDetectionNode(Node):
             model=model_name,
             messages=[{"role": "user", "content": "ping"}],
             stream=False,
-            keep_alive="30m",
+            keep_alive="15m",
             options={"temperature": 0, "num_predict": 1},
         )
 
