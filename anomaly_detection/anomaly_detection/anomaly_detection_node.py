@@ -18,6 +18,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import threading
 import time
 
 from std_msgs.msg import String as ROSString
@@ -33,7 +34,6 @@ from std_msgs.msg import String
 
 from anomaly_detection.llm_client import LLMClient
 from anomaly_detection.response_handler import parse_llm_response
-from anomaly_detection.StringRingBuffer import StringRingBuffer
 from ollama import Client
 
 
@@ -73,11 +73,11 @@ class AnomalyDetectionNode(Node):
     Methods
     -------
         log_caching_callback(msg: AnomalyMsg):
-            Callback for incoming AnomalyMsg messages. Caches them in a StringRingBuffer after formatting for LLM. Optionally throttles INFO messages.
+            Callback for incoming AnomalyMsg messages. Caches them in a bounded deque after formatting for LLM. Optionally throttles INFO messages.
     
         llm_callback():
             Timer-driven callback that processes cached messages with the LLM, parses the response, and publishes alerts if anomalies are detected. 
-            Clears the cache after processing.
+            Snapshots and clears the cache atomically before processing.
 
         trigger_message_callback():
             Triggered when trigger_input_topic receives a message, adds to queue, triggers LLM call (since anomaly was found by trigger).
@@ -136,7 +136,8 @@ class AnomalyDetectionNode(Node):
 
         # Cache sizing
         self.cache_max_items = int(self.config.get("cache_max_items", 100))
-        self.queue = StringRingBuffer(max_items=self.cache_max_items)
+        self.queue = deque(maxlen=self.cache_max_items)
+        self._queue_lock = threading.Lock()
 
         # Keep a lightweight recent raw snapshot for debugging / optional artifact content
         self.raw_history_max_items = int(self.config.get("raw_history_max_items", 50))
@@ -327,7 +328,9 @@ class AnomalyDetectionNode(Node):
             )
 
         try:
-            self.queue.add(self._format_for_llm(msg))
+            formatted = self._format_for_llm(msg)
+            with self._queue_lock:
+                self.queue.append(formatted)
         except Exception as e:
             self.get_logger().warn(
                 f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
@@ -340,13 +343,15 @@ class AnomalyDetectionNode(Node):
         Flow
         ----
         - snapshot cache
+        - clear cache
         - call LLM/API
         - write a JSON artifact containing cached_data and api_response
         - parse with response handler
         - publish alert if anomaly
-        - clear cache
         """
-        raw_list = self.queue.snapshot()
+        with self._queue_lock:
+            raw_list = list(self.queue)
+            self.queue.clear()
 
         if not raw_list:
             return
@@ -395,11 +400,10 @@ class AnomalyDetectionNode(Node):
                 f"[AAD] Could not parse decision during testing: {e}"
             )
 
-        self.queue.clear()
-
     def trigger_message_callback(self, msg: ROSString) -> None:
         self._msg_count += 1
-        self.queue.add(msg.data)
+        with self._queue_lock:
+            self.queue.append(msg.data)
         self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
         ## TODO uncomment for actual llm testing
         ##self.llm_callback() 
