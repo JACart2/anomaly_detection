@@ -1,3 +1,8 @@
+"""Dummy trigger to test modular trigger integration in AAD node.
+
+Author: John Rosario Cruz
+Version: 4/19/2026
+"""
 ## ROS2 packages
 import os
 import yaml
