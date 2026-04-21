@@ -1,27 +1,45 @@
-# response_handler.py
+"""Response handler for LLM outputs. 
+Ensures consistent Decision objects with validation given LLM responses.
+
+Author: AAD Team Spring 26'
+Version: 4/21/26
+"""
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-
 VALID_ACTIONS = {"stop_cart", "alert_admin", "none"}
 VALID_SEVERITIES = {"low", "medium", "high", "unknown"}
 
-
+## Definition of the `Decision` type that is actually returned.s
 @dataclass(frozen=True)
 class Decision:
     """Internal contract between LLM output and ROS2 downstream usage."""
     anomaly: bool
-    severity: str          # low | medium | high | unknown
-    action: str            # stop_cart | alert_admin | none
-    summary: str           # short explanation (human readable)
+    severity: str                         # low | medium | high | unknown
+    action: str                           # stop_cart | alert_admin | none
+    summary: str                          # short explanation (human readable)
     raw: Optional[Dict[str, Any]] = None  # keep original dict when possible
 
 
 def _derive_severity(action: str, anomaly: bool) -> str:
-    """Fallback mapping when severity is not explicitly provided."""
+    """
+    Util function to associate severity with the action with severity level.
+    
+    Args
+    ----
+        action (str): the recommended action returned from the LLM.
+
+        anomaly (bool): whether the LLM detected an anomaly.
+    
+    Returns
+    -------
+        str: associated severity.
+            >>> str : ["low", "medium", "high", "unknown"]
+    
+    """
     if not anomaly:
         return "low"
     if action == "stop_cart":
@@ -33,8 +51,16 @@ def _derive_severity(action: str, anomaly: bool) -> str:
 
 def _validate_payload(d: Dict[str, Any]) -> Tuple[bool, str]:
     """
-    Validate required fields and allowed values.
-    Returns (ok, error_message).
+    Validates the LLM response against expected schema.
+    
+    Args
+    ----
+        d (dict): the LLM response payload to validate.
+    
+    Returns
+    -------
+        tuple[bool, str]: A tuple containing a boolean indicating validation success and a string with an error message if validation fails.
+    
     """
     if "anomaly" not in d:
         return False, "Missing required field: anomaly"
@@ -48,10 +74,6 @@ def _validate_payload(d: Dict[str, Any]) -> Tuple[bool, str]:
     if action not in VALID_ACTIONS:
         return False, f"Invalid action '{action}'. Must be one of {sorted(VALID_ACTIONS)}"
 
-    # Only if we want to enforce severity values when provided (optional field)
-    #if "severity" in d and d["severity"] not in VALID_SEVERITIES:
-        #return False, f"Invalid severity '{d['severity']}'. Must be one of {sorted(VALID_SEVERITIES)}"
-
     # summary or reason are acceptable (we’ll normalize)
     if "summary" not in d and "reason" not in d:
         return False, "Missing required field: summary (or legacy reason)"
@@ -61,13 +83,17 @@ def _validate_payload(d: Dict[str, Any]) -> Tuple[bool, str]:
 
 def parse_llm_response(resp: Any) -> Decision:
     """
-    Accepts:
-      - Pydantic model instance (e.g., AnomalyResponse from openai_call.py)
-      - dict
-      - JSON string
-      - plain text (treated as malformed -> fallback)
-
-    Produces a validated Decision with safe fallbacks on errors.
+    Main method for parsing LLM responses.
+    
+    Args
+    ----
+        resp (Any): The LLM response to parse. Should be a string representation of a JSON object, but some 
+        validation is used to handle dict, Pydantic model instances, or malformed strings.
+    
+    Returns
+    -------
+        Decision: The parsed decision object.
+    
     """
     # 1) Normalize to dict where possible
     payload: Optional[Dict[str, Any]] = None
