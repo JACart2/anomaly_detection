@@ -1,5 +1,5 @@
 # AI Anomaly Detection
-Last updated: 4/19/2026 (Sprint 4)
+Last updated: 4/22/2026 (Sprint 5)
 
 Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litellm.ai/docs/) or local Ollama model for determinations. 
 
@@ -21,6 +21,14 @@ _It is recommended that this system exists in a Docker container that shares a n
 * Requirements.txt. See (https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/requirements.txt)
 * `.env` for local testing/prod run. Contains the API key associated with the model specified in `config.yaml`
 * Python (>= 3.12 recommended, older versions may cause bugs)
+
+Follow these steps below for Ollama config on host machine for supporting local model integration (assuming Linux OS)
+
+1. curl -fsSL https://ollama.com/install.sh | sh
+2. ollama pull `my_model`
+
+_Assert that the downloaded model name matches with the names referenced in the AAD node's config.yaml._
+
 
 ## Project Structure
 
