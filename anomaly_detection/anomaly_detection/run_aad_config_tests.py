@@ -322,6 +322,7 @@ def main(args=None) -> None:
         config_files = list(args.configs)
     else:
         search_path = os.path.join(args.config_dir, "*.yaml")
+        
         config_files = sorted(glob.glob(search_path))
         if not config_files:
             print(f"Warning: No .yaml files found in {args.config_dir}")
