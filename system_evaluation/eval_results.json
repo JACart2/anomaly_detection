@@ -5,16 +5,8 @@
     "category": "Mechanical issue",
     "description": "Missing hearbeat",
     "expected": "Yes",
-    "detected": true,
-    "correct": true,
-    "alerts": [
-      {
-        "raw": "anomaly=True severity=high action=alert_admin summary=Repeated errors opening serial port /dev/ttyUSB0 at motor_endpoint",
-        "anomaly": true,
-        "severity": "high",
-        "action": "alert_admin",
-        "summary": "Repeated"
-      }
-    ]
+    "detected": false,
+    "correct": false,
+    "alerts": []
   }
 ]
