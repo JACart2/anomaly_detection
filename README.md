@@ -118,3 +118,6 @@ This requires a `.env` file in the same folder as the AAD node, with API keys in
 ```
 
 See `config.yaml` for full deployment configuration options, including model selection, topic names, and trigger script registration.
+
+## Attributions
+Created by John Rosario Cruz (gr8jj28@gmail.com), Allie O'Keeffe, & Chrisopher Michael Hubbard.

@@ -12,6 +12,7 @@ from io import BytesIO
 from PIL import Image
 import base64
 from dotenv import load_dotenv
+from ollama import Client
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -93,7 +94,9 @@ class LLMClient:
 
         self.model = f"{self.provider}/{self.model_name}"
         self.api_base = os.getenv(f"{self.provider.upper()}_API_BASE", None)
-        
+        self.ollama_client = Client(host="http://localhost:11434")
+
+
     def chat(self, text: str, images=[]) -> str:
         """
         Call a LiteLLM model given some string data & optional images and return the response.
@@ -150,7 +153,7 @@ class LLMClient:
             str: the models response
         
         """
-        from ollama import Client
+        
 
         messages = []
 
@@ -163,8 +166,7 @@ class LLMClient:
 
         messages.append(user_message)
 
-        client = Client(host="http://localhost:11434")
-        response = client.chat(
+        response = self.ollama_client.chat(
             model=self.model_name,
             messages=messages,
             stream=False,

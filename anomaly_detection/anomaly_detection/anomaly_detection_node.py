@@ -324,13 +324,13 @@ class AnomalyDetectionNode(Node):
             self.get_logger().warn(
                 f"[AAD] LLM call failed. See: {e}"
             )
-            self.decision_pub.publish(Decision(
-            anomaly=False,
-            severity="unknown",
-            action="none",
-            summary=f"LLM call failed. See: {e}",
-            raw=None,
-        ))
+            
+            decision_msg = ROSString()
+            decision_msg.data = (
+                f"anomaly=False severity=unknown "
+                f"action=LLM Call failed summary=LLM call Failed"
+            )
+            self.decision_pub.publish(decision_msg)
 
         # Create artifact even if API failed
         artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
