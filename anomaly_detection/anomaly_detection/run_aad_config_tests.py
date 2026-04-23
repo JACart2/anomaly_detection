@@ -18,18 +18,19 @@ import glob
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor  # FIX: was used but never imported
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from dotenv import load_dotenv
 
 
 ALERT_TOPIC = "/aad/decisions"
+LLM_CALLED_TOPIC = "/aad/llm_called"
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 class AlertCollector(Node):
     """
     Description
     ------------
-        Lightweight ROS 2 node that subscribes to /aad/alerts and collects
+        Lightweight ROS 2 node that subscribes to /aad/decisions and collects
         incoming alert strings for comparison against ground truth labels.
 
     Attributes
@@ -45,8 +46,10 @@ class AlertCollector(Node):
 
     def __init__(self):
         super().__init__("eval_alert_collector")
+        self.llm_called = 0
         self.alerts = []
         self.create_subscription(String, ALERT_TOPIC, self._callback, 10)
+        self.create_subscription(Bool, LLM_CALLED_TOPIC, self._llm_callback, 10)
 
     def _callback(self, msg: String) -> None:
         """
@@ -57,6 +60,20 @@ class AlertCollector(Node):
         """
         self.get_logger().info(f"Alert received: {msg.data}")
         self.alerts.append(msg.data)
+
+    def _llm_callback(self, msg: Bool) -> None:
+        """
+        Subscription callback for /aad/llm_called.
+
+        Args:
+            msg (Bool): Used to count the number of times the LLM has been called.
+        """
+        self.get_logger().info(f"LLM called: {msg.data}")
+        self.llm_called += 1
+
+    def reset(self):
+        self.llm_called = 0
+        self.alerts.clear()
 
 
 def parse_alert(alert_str: str) -> dict:
@@ -86,7 +103,7 @@ def parse_alert(alert_str: str) -> dict:
 NODE_STARTUP_GRACE_SEC = 3.0
 # How long to keep polling for alerts after the bag finishes, in case the LLM
 # response arrives slightly after playback ends.
-POST_BAG_DRAIN_SEC = 15.0
+POST_BAG_DRAIN_SEC = 45.0
 # How long to wait for the spin thread to exit after stop_event is set.
 SPIN_JOIN_TIMEOUT_SEC = 30.0
 # How long to wait for the AAD node process to exit after SIGTERM before the
@@ -156,7 +173,7 @@ def _run_one_bag(
         return None
 
     # Clear any alerts left over from the previous bag before playing this one.
-    collector.alerts.clear()
+    collector.reset()
 
     print(f"  Playing {bag_file}...", end=" ", flush=True)
 
@@ -167,11 +184,9 @@ def _run_one_bag(
     )
     bag_proc.wait()
 
-    # Drain: wait for any LLM call already in-flight when the bag ended.
-    start = time.time()
-    while time.time() - start < POST_BAG_DRAIN_SEC:
+    while collector.llm_called != len(collector.alerts):
         time.sleep(0.5)
-
+        
     detected = len(collector.alerts) > 0
     correct  = detected == (expected == "Yes")
     status   = "✓" if correct else "✗"
@@ -242,8 +257,8 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                     ["ros2", "run", "anomaly_detection", "anomaly_detection_node"],
                     env=env,
                     start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    # stdout=subprocess.DEVNULL,
+                    # stderr=subprocess.DEVNULL,
                 )
                 time.sleep(NODE_STARTUP_GRACE_SEC)
 

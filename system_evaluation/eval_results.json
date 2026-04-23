@@ -1,6 +1,6 @@
 [
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/config.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
     "bag_file": "rosbag2_2026_04_22-17_52_00",
     "category": "Mechanical issue",
     "description": "Missing hearbeat",
@@ -9,11 +9,11 @@
     "correct": true,
     "alerts": [
       {
-        "raw": "anomaly=False severity=unknown action=none summary=Invalid/malformed LLM response (non-JSON). Falling back to safe default.",
+        "raw": "anomaly=True severity=high action=alert_admin summary=Repeated errors opening serial port /dev/ttyUSB0 at motor_endpoint",
         "anomaly": true,
-        "severity": "unknown",
-        "action": "none",
-        "summary": "Invalid/malformed"
+        "severity": "high",
+        "action": "alert_admin",
+        "summary": "Repeated"
       }
     ]
   }

@@ -22,6 +22,8 @@ import threading
 import time
 
 from std_msgs.msg import String as ROSString
+from std_msgs.msg import Bool
+
 import sys
 from collections import deque
 
@@ -30,9 +32,10 @@ import yaml
 from anomaly_msg.msg import AnomalyMsg
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from ollama import Client
 
 from anomaly_detection.llm_client import LLMClient
-from anomaly_detection.response_handler import parse_llm_response
+from anomaly_detection.response_handler import parse_llm_response, Decision
 
 
 class AnomalyDetectionNode(Node):
@@ -168,7 +171,7 @@ class AnomalyDetectionNode(Node):
         self.alert_topic = self.config.get("alert_topic", "/aad/alerts")
 
         ## Install deps for chosen triggers & start them
-        self._triggers = self.config.get("trigger_scripts", [])
+        self._triggers = self.config.get("trigger_scripts") if self.config.get("trigger_scripts") != None else []
         self.trigger_nodes = []
         for trigger in self._triggers:
             self.get_logger().info(f"Configured trigger script: {trigger}")
@@ -201,6 +204,7 @@ class AnomalyDetectionNode(Node):
         self.alert_pub = self.create_publisher(ROSString, self.alert_topic, 10)
         # Added for the config tests
         self.decision_pub = self.create_publisher(ROSString, "/aad/decisions", 10)
+        self.llm_called_pub = self.create_publisher(Bool, "/aad/llm_called", 10)
 
         # JSON artifact output config
         self.api_artifact_output_dir = self.config.get(
@@ -227,7 +231,6 @@ class AnomalyDetectionNode(Node):
 
         # Start local Ollama once, before first inference
         if self.llm_local:
-            from ollama import Client
 
             if self._is_ollama_ready():
                 self.get_logger().info(
@@ -307,7 +310,9 @@ class AnomalyDetectionNode(Node):
         full_payload = "\n".join(raw_list)
         response = ""
         try:
-            
+            msg = Bool()
+            msg.data = True
+            self.llm_called_pub.publish(msg)
             if self.llm_local:
                 response = self.llm.local_chat(full_payload)
             else:
@@ -317,6 +322,13 @@ class AnomalyDetectionNode(Node):
             self.get_logger().warn(
                 f"[AAD] LLM call failed. See: {e}"
             )
+            self.decision_pub.publish(Decision(
+            anomaly=False,
+            severity="unknown",
+            action="none",
+            summary=f"LLM call failed. See: {e}",
+            raw=None,
+        ))
 
         # Create artifact even if API failed
         artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
@@ -708,6 +720,7 @@ def main(args=None) -> None:
         pass
     finally:
         ## destroy trigger script nodes if they exist
+        
         if hasattr(node, "trigger_nodes"):
             for trigger_node in node.trigger_nodes:
                 trigger_node.destroy_node()
