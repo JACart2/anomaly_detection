@@ -11,7 +11,6 @@ import yaml
 from io import BytesIO
 from PIL import Image
 import base64
-from ollama import Client
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -151,6 +150,8 @@ class LLMClient:
             str: the models response
         
         """
+        from ollama import Client
+
         messages = []
 
         if self.system_prompt:
