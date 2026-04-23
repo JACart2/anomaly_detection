@@ -101,9 +101,7 @@ def parse_alert(alert_str: str) -> dict:
 
 # How long to wait for the AAD node process to be ready before playing a bag.
 NODE_STARTUP_GRACE_SEC = 3.0
-# How long to keep polling for alerts after the bag finishes, in case the LLM
-# response arrives slightly after playback ends.
-POST_BAG_DRAIN_SEC = 45.0
+
 # How long to wait for the spin thread to exit after stop_event is set.
 SPIN_JOIN_TIMEOUT_SEC = 30.0
 # How long to wait for the AAD node process to exit after SIGTERM before the
