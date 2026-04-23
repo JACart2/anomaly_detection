@@ -92,6 +92,8 @@ class AnomalyDetectionNode(Node):
     
         decision_pub (Publisher): ROS publisher for parsed LLM decisions (added for offline runner).
 
+        llm_called_pub (Publisher): ROS publisher to indicate when the LLM is called (added for offline runner).
+
         api_artifact_output_dir (str): Directory to write JSON artifacts containing LLM input and output. 
             Default: /root/dev_ws/src/anomaly_detection/log.
         
