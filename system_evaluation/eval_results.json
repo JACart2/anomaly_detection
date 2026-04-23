@@ -1,0 +1,20 @@
+[
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/config.yaml",
+    "bag_file": "rosbag2_2026_04_22-17_52_00",
+    "category": "Mechanical issue",
+    "description": "Missing hearbeat",
+    "expected": "Yes",
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=False severity=unknown action=none summary=Invalid/malformed LLM response (non-JSON). Falling back to safe default.",
+        "anomaly": true,
+        "severity": "unknown",
+        "action": "none",
+        "summary": "Invalid/malformed"
+      }
+    ]
+  }
+]

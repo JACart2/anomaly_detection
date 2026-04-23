@@ -34,7 +34,6 @@ from std_msgs.msg import String
 from anomaly_detection.llm_client import LLMClient
 from anomaly_detection.response_handler import parse_llm_response
 from anomaly_detection.StringRingBuffer import StringRingBuffer
-from ollama import Client
 
 
 class AnomalyDetectionNode(Node):
@@ -183,6 +182,7 @@ class AnomalyDetectionNode(Node):
 
         # Start local Ollama once, before first inference
         if self.llm_local:
+            from ollama import Client
             self._start_local_ollama()
             self._wait_for_ollama_ready()
             self._warm_local_model()
@@ -605,7 +605,7 @@ def main(args=None) -> None:
 
     try:
         executor.spin()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
         ## destroy trigger script nodes if they exist
@@ -618,7 +618,9 @@ def main(args=None) -> None:
             node._stop_local_ollama()
         node.destroy_node()
         executor.shutdown()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
