@@ -1,7 +1,7 @@
 # AAD Configuration File
 # Controls artifact generation and API trigger behavior.
 
-#The amount of time between periodic API calls
+#The amount of time between api calls
 api_frequency_seconds: 15
 
 #The max amount of messages stored
@@ -9,12 +9,10 @@ cache_max_items: 100
 cache_max_age_seconds: 30
 
 # The LLM info used to select the model in llm_client.py
-# note: model_provider and model can be identical when local is set to True.
 # Args:
-#   model_provider: Name of model provider e.g. openai
-#   model: Name of specific model e.g. gpt-4o
-#   local: Whether to use a local model or an API-based model.
-#   system_prompt: The system prompt passed to the llm.
+#   model_provider: Name of model provider 
+#   model: Name of specific model
+#   system_prompt: The system prompt passed to the llm 
 llm: 
   model_provider: "mistral"
   model: 'mistral'
@@ -28,24 +26,32 @@ llm:
     {"anomaly": true/false, "severity": "low|medium|high|unknown",
     "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
 
-## See README for trigger script details. These are paths under ./triggers containing ROS2 nodes.
+## specify unique paths for required dependencies & node starting
 trigger_scripts: 
 - dummy_trigger
-
-## Where trigger scripts send messages to/where AAD system listens for trigger messages.
+## where to monitorer for messages
 trigger_input_topic: "/trigger_messages"
 
-## Input topic for AAD system/output topic for anomalous alerts.
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
 
-## Throttling for INFO type messages & how many seconds to pass between INFO msg.
 throttle_info: true
 info_min_period_sec: 0.1
 
-## Logging frequency.
 log_every_n_msgs: 1
 
-## Location for API call artifacts & how much to cache in the artifacts.
+#Additional bagging info
 api_artifact_output_dir: "/root/dev_ws/src/anomaly_detection/logs"
+
 raw_history_max_items: 50
+
+# Universal throttling configuration for high-volume or compromised nodes.
+# When a node sends more than max_messages within window_seconds, its
+# messages are temporarily dropped and a JSON throttle event is written to
+# the configured log_dir.
+universal_throttle:
+  enabled: true
+  max_messages: 100
+  window_seconds: 5
+  log_cooldown_seconds: 30
+  log_dir: "./logs"
