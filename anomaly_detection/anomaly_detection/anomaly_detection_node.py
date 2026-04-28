@@ -11,19 +11,16 @@ Each time the LLM is called, the node writes a JSON artifact containing:
 - api_response
 
 Author: AAD Team Spring 26'
-Version: 4/21/2026
+Version: 4/12/2026
 """
 import importlib.util
 
 import json
 import os
 import subprocess
-import threading
 import time
 
 from std_msgs.msg import String as ROSString
-from std_msgs.msg import Bool
-
 import sys
 from collections import deque
 
@@ -32,10 +29,12 @@ import yaml
 from anomaly_msg.msg import AnomalyMsg
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from ollama import Client
+from std_msgs.msg import String
 
 from anomaly_detection.llm_client import LLMClient
-from anomaly_detection.response_handler import parse_llm_response, Decision
+from anomaly_detection.response_handler import parse_llm_response
+from anomaly_detection.StringRingBuffer import StringRingBuffer
+from ollama import Client
 
 
 class AnomalyDetectionNode(Node):
@@ -45,99 +44,43 @@ class AnomalyDetectionNode(Node):
         Central manager for AI Anomaly Detection node.
         - Subscribes to /ai_anomaly_logging (standardized logging topic)
         - Caches a bounded, LLM-friendly representation of AnomalyMsg
-        - Periodically calls the LLM/API (or on-demand through trigger topic)
+        - Periodically calls the LLM/API
         - Parses result via response_handler into a Decision
         - Publishes alerts to /aad/alerts when anomalies are detected
-        - Leaves JSON artifacts behind of cache -> LLM response in ./logs.
-        - Optionally creates API-triggered rosbag artifacts if configured
+        - Optionally creates API-triggered rosbag artifacts
 
     Attributes
     ----------
-        config (dict): Configuration dictionary loaded from YAML file.
-            Default expect config.yaml at level of this file, otherwise uses os.getenv("AAD_CONFIG_PATH"). 
-        
-        llm_local (bool): Whether to start and use a local Ollama server for LLM inference. 
-            Default: False.
-
-        trigger_input_topic (str): The ROS topic to subscribe to for trigger messages that should cause an immediate LLM call. 
-            Default: /trigger_messages.
 
         raw_input_topic (str): The ROS topic to subscribe to for raw anomaly messages. Default: /ai_anomaly_logging.
-            Default: /ai_anomaly_logging.
 
         alert_topic (str): The ROS topic to publish alerts to when anomalies are detected. Default: /aad/alerts.
-            Default: /aad/alerts.
 
-        trigger_nodes (list[Node]): List of instantiated trigger script nodes to add to the executor. Populated based on config _trigger_scripts list.
-            Defautl: [].
-        
-        api_frequency_seconds (float): How often to call the LLM/API in seconds. 
-            Default: 60.0.
+        trigger_script_enabled (bool): Whether the trigger script is enabled. Default: False.
 
-        cache_max_items (int): Maximum number of messages to keep in the cache for LLM processing. 
-            Default: 100.
+        api_frequency_seconds (float): How often to call the LLM/API in seconds. Default: 60.0.
 
-        queue (deque): Thread-safe deque to cache formatted messages for LLM processing.
+        cache_max_items (int): Maximum number of messages to keep in the cache for LLM processing. Default: 100.
 
-        throttle_info (bool): Whether to throttle INFO messages to protect LLM context. 
-            Default: True.
+        throttle_info (bool): Whether to throttle INFO messages to protect LLM context. Default: True.
 
-        info_min_period_sec (float): Minimum period in seconds between INFO messages if throttling is enabled. 
-            Default: 1.0.
+        info_min_period_sec (float): Minimum period in seconds between INFO messages if throttling is enabled. Default: 1.0.
 
-        log_every_n_msgs (int): How often to log received messages for debugging. 
-            Default: 50.
+        log_every_n_msgs (int): How often to log received messages for debugging. Default: 50.
 
         alert_pub (Publisher): ROS publisher for anomaly alerts.
-    
-        decision_pub (Publisher): ROS publisher for parsed LLM decisions (added for offline runner).
-
-        api_artifact_output_dir (str): Directory to write JSON artifacts containing LLM input and output. 
-            Default: /root/dev_ws/src/anomaly_detection/log.
-        
-        llm (LLMClient): Reusable client for making LLM calls, initialized once in __init__.
-
-        _ollama_proc (subprocess.Popen | None): Handle for the local Ollama server process if llm_local is True.
-
-        _triggers list[str]: List of trigger script names to load from the triggers/ subfolder. Each should have an install.
-            Default: [].
-            
-        _queue_lock (threading.Lock): Lock to protect access to the message cache queue.
-
-        _last_info_time_sec (float): Timestamp of the last INFO message processed, used for throttling.
-
-        _msg_count (int): Counter for the number of messages received, used for periodic logging.
-    
     
     Methods
     -------
         log_caching_callback(msg: AnomalyMsg):
-            Callback for incoming AnomalyMsg messages. Caches them in a bounded deque after formatting for LLM. Optionally throttles INFO messages.
+            Callback for incoming AnomalyMsg messages. Caches them in a StringRingBuffer after formatting for LLM. Optionally throttles INFO messages.
     
         llm_callback():
             Timer-driven callback that processes cached messages with the LLM, parses the response, and publishes alerts if anomalies are detected. 
-            Snapshots and clears the cache atomically before processing.
+            Clears the cache after processing.
 
         trigger_message_callback():
             Triggered when trigger_input_topic receives a message, adds to queue, triggers LLM call (since anomaly was found by trigger).
-
-        _is_ollama_ready():
-            Quick health check for an already-running local Ollama server.
-
-        _start_local_ollama():
-            Starts a local Ollama server as a subprocess if llm_local is True.
-
-        _wait_for_ollama_ready(timeout_sec: float):
-            Waits until the local Ollama server is responsive or a timeout is reached.
-            
-        _warm_local_model():
-            Makes a simple call to the local Ollama server to load the model into memory and reduce latency for the first real call.
-
-        _stop_local_ollama():
-            Stops the local Ollama server subprocess if it was started by this node.    
-        
-        _write_api_artifact(artifact_id: str, cached_data: list[str], api_response: str):
-            Writes a JSON artifact containing the cached LLM input and the API response for later analysis.
 
         _run_trigger_script_install():
             Run install.sh of respective trigger scripts and import modules to self.trigger_nodes.
@@ -145,6 +88,9 @@ class AnomalyDetectionNode(Node):
         _load_config():
             Loads configuration from a YAML file. Resolution order:
               AAD_CONFIG_PATH if set, config.yaml if not.
+
+        _now_sec():
+            Helper method to get the current node time in seconds (using ROS clock).
 
         _importance_to_str(importance: int):
             Helper method to convert AnomalyMsg importance integer to a string representation (INFO, WARNING, ERROR).
@@ -154,8 +100,11 @@ class AnomalyDetectionNode(Node):
 
         _format_for_llm(m: AnomalyMsg):
             Converts an AnomalyMsg into a compact, LLM-friendly string representation.
+
+        api_artifact_output_dir (str): Directory to store generated JSON artifacts.
     
     """
+
 
     def __init__(self):
         super().__init__("anomaly_detection")
@@ -171,9 +120,9 @@ class AnomalyDetectionNode(Node):
         self.alert_topic = self.config.get("alert_topic", "/aad/alerts")
 
         ## Install deps for chosen triggers & start them
-        self._triggers = self.config.get("trigger_scripts") if self.config.get("trigger_scripts") != None else []
+        self.triggers = self.config.get("trigger_scripts", [])
         self.trigger_nodes = []
-        for trigger in self._triggers:
+        for trigger in self.triggers:
             self.get_logger().info(f"Configured trigger script: {trigger}")
             ## create list of node objects to add to executor in main.
             response = self._run_trigger_script_install(trigger)
@@ -187,13 +136,29 @@ class AnomalyDetectionNode(Node):
 
         # Cache sizing
         self.cache_max_items = int(self.config.get("cache_max_items", 100))
-        self.queue = deque(maxlen=self.cache_max_items)
-        self._queue_lock = threading.Lock()
+        self.queue = StringRingBuffer(max_items=self.cache_max_items)
+
+        # Keep a lightweight recent raw snapshot for debugging / optional artifact content
+        self.raw_history_max_items = int(self.config.get("raw_history_max_items", 50))
+        self.raw_msg_history = deque(maxlen=self.raw_history_max_items)
 
         # Optional INFO throttling to protect context window
         self.throttle_info = bool(self.config.get("throttle_info", True))
         self.info_min_period_sec = float(self.config.get("info_min_period_sec", 1.0))
         self._last_info_time_sec = 0.0
+
+        # Universal throttle for detecting misconfigured or compromised nodes
+        self.universal_throttle_config = self.config.get("universal_throttle", {})
+        self.universal_throttle_enabled = bool(self.universal_throttle_config.get("enabled", True))
+        self.universal_throttle_max_messages = int(self.universal_throttle_config.get("max_messages", 100))
+        self.universal_throttle_window_seconds = float(self.universal_throttle_config.get("window_seconds", 5))
+        self.universal_throttle_log_cooldown_seconds = float(
+            self.universal_throttle_config.get("log_cooldown_seconds", 30)
+        )
+        self.universal_throttle_log_dir = self.universal_throttle_config.get(
+            "log_dir", os.path.join(os.getcwd(), "logs")
+        )
+        self.universal_throttle_state: dict[str, dict] = {}
 
         # Debug logging controls
         self._msg_count = 0
@@ -204,21 +169,21 @@ class AnomalyDetectionNode(Node):
         self.alert_pub = self.create_publisher(ROSString, self.alert_topic, 10)
         # Added for the config tests
         self.decision_pub = self.create_publisher(ROSString, "/aad/decisions", 10)
-        self.llm_called_pub = self.create_publisher(Bool, "/aad/llm_called", 10)
 
         # JSON artifact output config
         self.api_artifact_output_dir = self.config.get(
             "api_artifact_output_dir",
-            "/root/dev_ws/src/anomaly_detection/logs",
+            "/tmp/aad_api_bags",
         )
 
         # Subscription to standardized logging topic
-        self.create_subscription(
+        self.subscription = self.create_subscription(
             AnomalyMsg,
             self.raw_input_topic,
             self.log_caching_callback,
             10,
         )
+        
 
         self.create_subscription(
             ROSString,
@@ -231,14 +196,8 @@ class AnomalyDetectionNode(Node):
 
         # Start local Ollama once, before first inference
         if self.llm_local:
-
-            if self._is_ollama_ready():
-                self.get_logger().info(
-                    "Detected existing Ollama server at http://localhost:11434; reusing it."
-                )
-            else:
-                self._start_local_ollama()
-                self._wait_for_ollama_ready()
+            self._start_local_ollama()
+            self._wait_for_ollama_ready()
             self._warm_local_model()
 
         # Create one reusable client
@@ -252,145 +211,13 @@ class AnomalyDetectionNode(Node):
             f"cache_max_items={self.cache_max_items}, "
             f"throttle_info={self.throttle_info}, "
             f"info_min_period_sec={self.info_min_period_sec}, "
+            f"universal_throttle_enabled={self.universal_throttle_enabled}, "
+            f"universal_throttle_max_messages={self.universal_throttle_max_messages}, "
+            f"universal_throttle_window_seconds={self.universal_throttle_window_seconds}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
         )
 
-    def log_caching_callback(self, msg: AnomalyMsg) -> None:
-        """
-        Monitor incoming AnomalyMsg messages, format them for LLM consumption, and cache in a thread-safe deque.
-        
-        Args
-        ----
-            msg (AnomalyMsg): The incoming anomaly message.
-        
-        """
-        self._msg_count += 1
-        if self.log_every_n_msgs > 0 and (self._msg_count % self.log_every_n_msgs == 0):
-            self.get_logger().info(
-                f"Received {self._msg_count} messages on {self.raw_input_topic}"
-            )
-
-        # Optional INFO throttling
-        if self.throttle_info and int(msg.importance) == AnomalyMsg.INFO:
-            now = float(self.get_clock().now().nanoseconds) / 1e9
-            if (now - self._last_info_time_sec) < self.info_min_period_sec:
-                return
-            self._last_info_time_sec = now
-
-        try:
-            formatted = self._format_for_llm(msg)
-            with self._queue_lock:
-                self.queue.append(formatted)
-        except Exception as e:
-            self.get_logger().warn(
-                f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
-            )
-
-    def llm_callback(self) -> None:
-        """
-        Timer-driven callback for processing cached log messages with the LLM.
-        Also creates artifacts of llm i/o for future analysis.
-
-        Flow
-        ----
-        - snapshot cache
-        - clear cache
-        - call LLM/API
-        - write a JSON artifact containing cached_data and api_response
-        - parse with response handler
-        - publish alert if anomaly
-        """
-        with self._queue_lock:
-            raw_list = list(self.queue)
-            self.queue.clear()
-
-        if not raw_list:
-            return
-
-        full_payload = "\n".join(raw_list)
-        response = ""
-        try:
-            msg = Bool()
-            msg.data = True
-            self.llm_called_pub.publish(msg)
-            if self.llm_local:
-                response = self.llm.local_chat(full_payload)
-            else:
-                response = self.llm.chat(full_payload)
-
-        except Exception as e:
-            self.get_logger().warn(
-                f"[AAD] LLM call failed. See: {e}"
-            )
-            self.decision_pub.publish(Decision(
-            anomaly=False,
-            severity="unknown",
-            action="none",
-            summary=f"LLM call failed. See: {e}",
-            raw=None,
-        ))
-
-        # Create artifact even if API failed
-        artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
-        self._write_api_artifact(artifact_id, raw_list, response)
-
-        # Try parsing decision if possible
-        try:
-            decision = parse_llm_response(response)
-
-            #### Added for the config tests 
-            decision_msg = ROSString()
-            decision_msg.data = (
-                f"anomaly={decision.anomaly} severity={decision.severity} "
-                f"action={decision.action} summary={decision.summary}"
-            )
-            self.decision_pub.publish(decision_msg)
-            ####
-
-            if decision.anomaly:
-                alert = ROSString()
-                alert.data = (
-                    f"[AAD ALERT] severity={decision.severity} "
-                    f"action={decision.action} summary={decision.summary}"
-                )
-                self.alert_pub.publish(alert)
-
-        except Exception as e:
-            self.get_logger().warn(
-                f"[AAD] Could not parse decision during testing: {e}"
-            )
-
-    def trigger_message_callback(self, msg: ROSString) -> None:
-        """
-        Monitor trigger messages that cause an immediate LLM call.
-        
-        Args
-        ----
-            msg (ROSString): The incoming trigger message.
-        
-        """
-        self._msg_count += 1
-        with self._queue_lock:
-            self.queue.append(msg.data)
-        self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
-        ## TODO uncomment for actual llm testing
-        ##self.llm_callback() 
-        return
-
-    def _is_ollama_ready(self) -> bool:
-        """
-        Quick health check for an already-running Ollama server.
-        """
-        try:
-            Client(host="http://localhost:11434").list()
-            return True
-        except Exception:
-            return False
-
     def _start_local_ollama(self) -> None:
-        """
-        Runs local Ollama server as a subprocess. Runs ollama serve on localhost:11434.
-        """
         if self._ollama_proc is not None and self._ollama_proc.poll() is None:
             return
 
@@ -407,13 +234,6 @@ class AnomalyDetectionNode(Node):
         )
 
     def _wait_for_ollama_ready(self, timeout_sec: float = 15.0) -> None:
-        """
-            Ping local Ollama server until it's ready or timeout is reached.
-        
-        Args
-        ----
-            timeout_sec (float): How long to wait until timeout
-        """
         deadline = time.time() + timeout_sec
         client = Client(host="http://localhost:11434")
 
@@ -433,9 +253,6 @@ class AnomalyDetectionNode(Node):
         raise RuntimeError(f"Ollama API did not become ready within {timeout_sec}s: {last_err}")
 
     def _warm_local_model(self) -> None:
-        """
-        Call the local model to "warm" it up and load into mem.W
-        """
         model_name = self.config.get("llm", {}).get("model", "mistral-small")
         client = Client(host="http://localhost:11434")
 
@@ -448,35 +265,17 @@ class AnomalyDetectionNode(Node):
             options={"temperature": 0, "num_predict": 1},
         )
 
-    def _stop_local_ollama(self) -> None:
-        """
-        Kills the local Ollama server subprocess if it was started by this node.
-        """
-        if self._ollama_proc is not None and self._ollama_proc.poll() is None:
-            self.get_logger().info("Stopping local Ollama server...")
-            self._ollama_proc.terminate()
-            try:
-                self._ollama_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self._ollama_proc.kill()
-                self._ollama_proc.wait(timeout=5)
+    def _generate_artifact_id(self) -> str:
+        """Generate a unique artifact ID for a single API invocation."""
+        stamp_ns = self.get_clock().now().nanoseconds
+        return f"api_artifact_{stamp_ns}"
 
     def _write_api_artifact(self, artifact_id: str, cached_data: list[str], api_response: str) -> str | None:
         """
-        Write a JSON artifact containing the cached LLM input and the API response.
-        
-        Args
-        ----
-            artifact_id (str): The unique ID for the artifact.
+        Write a lightweight JSON artifact for a single LLM invocation.
 
-            cached_data (list[str]): The cached data sent to the LLM.
-
-            api_response (str): The raw response from the LLM.
-
-        Returns
-        -------
-            str: The path to the created JSON artifact, or None if creation failed.
-
+        The artifact contains the cached data sent to the LLM and the raw
+        response returned by the LLM.
         """
         try:
             os.makedirs(self.api_artifact_output_dir, exist_ok=True)
@@ -505,15 +304,201 @@ class AnomalyDetectionNode(Node):
             )
             return None
 
-    def _run_trigger_script_install(self, trigger: str) -> Node | None:
+    def _write_universal_throttle_json(self, node_name: str, msg: AnomalyMsg, current_count: int) -> str | None:
+        """Write a JSON event whenever a node is throttled for excessive message volume."""
+        os.makedirs(self.universal_throttle_log_dir, exist_ok=True)
+
+        safe_node_name = "".join(
+            c if c.isalnum() or c in "-_" else "_" for c in (node_name or "unknown")
+        )[:50]
+        artifact_id = f"universal_throttle_{safe_node_name}_{self.get_clock().now().nanoseconds}"
+        artifact_path = os.path.join(self.universal_throttle_log_dir, f"{artifact_id}.json")
+
+        payload = {
+            "artifact_id": artifact_id,
+            "timestamp_ns": self.get_clock().now().nanoseconds,
+            "timestamp_epoch": time.time(),
+            "node_name": node_name,
+            "importance": int(msg.importance),
+            "type": int(msg.type),
+            "msg": msg.msg,
+            "data_type": msg.data_type,
+            "data_len": len(msg.data) if hasattr(msg, "data") else None,
+            "frame_id": getattr(msg.header, "frame_id", ""),
+            "reason": "universal_throttle_threshold_exceeded",
+            "current_count": current_count,
+            "max_messages": self.universal_throttle_max_messages,
+            "window_seconds": self.universal_throttle_window_seconds,
+            "throttle_action": "dropped",
+        }
+
+        try:
+            with open(artifact_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            self.get_logger().info(f"[AAD] Universal throttle event created at: {artifact_path}")
+            return artifact_path
+        except Exception as e:
+            self.get_logger().error(
+                f"Line {sys._getframe().f_lineno}: Failed to write universal throttle JSON: {e}"
+            )
+            return None
+
+    def _should_universal_throttle(self, msg: AnomalyMsg) -> bool:
+        if not self.universal_throttle_enabled:
+            return False
+
+        node_name = msg.node_name or "<unknown>"
+        now = self._now_sec()
+        state = self.universal_throttle_state.setdefault(
+            node_name,
+            {"timestamps": deque(), "last_log_time": 0.0},
+        )
+
+        timestamps: deque[float] = state["timestamps"]
+        while timestamps and now - timestamps[0] > self.universal_throttle_window_seconds:
+            timestamps.popleft()
+
+        timestamps.append(now)
+        if len(timestamps) > self.universal_throttle_max_messages:
+            if now - state["last_log_time"] >= self.universal_throttle_log_cooldown_seconds:
+                self._write_universal_throttle_json(node_name, msg, len(timestamps))
+                state["last_log_time"] = now
+            self.get_logger().warn(
+                f"[AAD] Universal throttle active for node={node_name}; "
+                f"{len(timestamps)}/{self.universal_throttle_max_messages} messages in "
+                f"{self.universal_throttle_window_seconds}s. Dropping message."
+            )
+            return True
+
+        return False
+
+    def log_caching_callback(self, msg: AnomalyMsg) -> None:
         """
-        Run trigger script installation (from __init__). Assumes install.sh is in the ./triggers/trigger subfolder and is executable.
+        Callback for incoming AnomalyMsg messages.
+        Caches them in an LLM-friendly queue and stores a lightweight raw snapshot.
+        """
+        self._msg_count += 1
+        if self.log_every_n_msgs > 0 and (self._msg_count % self.log_every_n_msgs == 0):
+            self.get_logger().info(
+                f"Received {self._msg_count} messages on {self.raw_input_topic}"
+            )
+
+        # Optional INFO throttling
+        if self.throttle_info and int(msg.importance) == AnomalyMsg.INFO:
+            now = self._now_sec()
+            if (now - self._last_info_time_sec) < self.info_min_period_sec:
+                return
+            self._last_info_time_sec = now
+
+        # Universal throttle: detect a node sending too many messages too fast.
+        if self._should_universal_throttle(msg):
+            return
+
+        # Store a lightweight raw snapshot for debugging
+        try:
+            self.raw_msg_history.append(
+                {
+                    "node_name": msg.node_name,
+                    "importance": int(msg.importance),
+                    "type": int(msg.type),
+                    "msg": msg.msg,
+                    "data_type": msg.data_type,
+                    "data_len": len(msg.data),
+                    "stamp_sec": msg.header.stamp.sec,
+                    "stamp_nanosec": msg.header.stamp.nanosec,
+                    "frame_id": msg.header.frame_id,
+                }
+            )
+        except Exception as e:
+            self.get_logger().warn(
+                f"Line {sys._getframe().f_lineno}: Failed to store raw message snapshot safely: {e}"
+            )
+
+        try:
+            self.queue.add(self._format_for_llm(msg))
+        except Exception as e:
+            self.get_logger().warn(
+                f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
+            )
+
+    def llm_callback(self) -> None:
+        """
+        Timer-driven callback for processing cached log messages with the LLM.
+
+        Flow
+        ----
+        - snapshot cache
+        - call LLM/API
+        - write a JSON artifact containing cached_data and api_response
+        - parse with response handler
+        - publish alert if anomaly
+        - clear cache
+        """
+        raw_list = self.queue.snapshot()
+
+        if not raw_list:
+            return
+
+        full_payload = "\n".join(raw_list)
+        response = ""
+        try:
+            
+            if self.llm_local:
+                response = self.llm.local_chat(full_payload)
+            else:
+                response = self.llm.chat(full_payload)
+
+        except Exception as e:
+            self.get_logger().warn(
+                f"[AAD] LLM call failed. See: {e}"
+            )
+
+        # Create artifact even if API failed
+        artifact_id = self._generate_artifact_id()
+        self._write_api_artifact(artifact_id, raw_list, response)
+
+        # Try parsing decision if possible
+        try:
+            decision = parse_llm_response(response)
+
+            #### Added for the config tests 
+            decision_msg = String()
+            decision_msg.data = (
+                f"anomaly={decision.anomaly} severity={decision.severity} "
+                f"action={decision.action} summary={decision.summary}"
+            )
+            self.decision_pub.publish(decision_msg)
+            ####
+
+            if decision.anomaly:
+                alert = ROSString()
+                alert.data = (
+                    f"[AAD ALERT] severity={decision.severity} "
+                    f"action={decision.action} summary={decision.summary}"
+                )
+                self.alert_pub.publish(alert)
+
+        except Exception as e:
+            self.get_logger().warn(
+                f"[AAD] Could not parse decision during testing: {e}"
+            )
+
+        self.queue.clear()
+
+    def trigger_message_callback(self, msg: ROSString) -> None:
+        self._msg_count += 1
+        self.queue.add(msg.data)
+        self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
+        ## TODO uncomment for actual llm testing
+        ##self.llm_callback() 
+        return
+
+    def _run_trigger_script_install(self, trigger: str) -> Node:
+        """
+        Run trigger script installation (from __init__). Assumes install.sh is in the trigger_script subfolder and is executable.
         
         Args:
             trigger (str): The name of the trigger script to install. Should correspond to a subfolder in triggers/ with an install.sh script.
-
-        Returns:
-            Node | None: An instance of the trigger node class defined in the trigger's Python module.
         """
         ## install.sh for deps
         script_path = os.path.join(os.path.dirname(__file__), "triggers", trigger, "install.sh")
@@ -620,18 +605,13 @@ class AnomalyDetectionNode(Node):
             )
             return {}
 
-    def _importance_to_str(self, importance: int) -> str:
-        """
-        Convert an AnomalyMsg importance integer to a string representation.
-        
-        Args
-        ----
-            importance (int): The importance level of the anomaly message.
+    def _now_sec(self) -> float:
+        """Current node time in seconds using the ROS clock."""
+        t = self.get_clock().now()
+        return float(t.nanoseconds) / 1e9
 
-        Returns
-        -------
-            str: The string representation of the importance level.
-        """
+    def _importance_to_str(self, importance: int) -> str:
+        """Convert an importance level to a string representation."""
         if importance == AnomalyMsg.ERROR:
             return "ERROR"
         if importance == AnomalyMsg.WARNING:
@@ -639,36 +619,32 @@ class AnomalyDetectionNode(Node):
         return "INFO"
 
     def _type_to_str(self, msg_type: int) -> str:
-        """
-        Convert an AnomalyMsg type integer to a string representation.
-        
-        Args
-        ----
-            msg_type (int): The type of the anomaly message.
-
-        Returns
-        -------
-            str: The string representation of the message type.
-        
-        """
+        """Convert a message type to a string representation."""
         if msg_type == AnomalyMsg.IMAGE:
             return "IMAGE"
         if msg_type == AnomalyMsg.DATA:
             return "DATA"
         return "TEXT"
 
+    def _stop_local_ollama(self) -> None:
+        if self._ollama_proc is not None and self._ollama_proc.poll() is None:
+            self.get_logger().info("Stopping local Ollama server...")
+            self._ollama_proc.terminate()
+            try:
+                self._ollama_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._ollama_proc.kill()
+                self._ollama_proc.wait(timeout=5)
+
     def _format_for_llm(self, m: AnomalyMsg) -> str:
         """
         Convert an AnomalyMsg into a compact, LLM-friendly string representation.
-        
-        Args
-        ----
-            m (AnomalyMsg): The anomaly message to format.
 
-        Returns
+        Example
         -------
-            str: The formatted string representation.
-        
+            [t=1234567890.123456789 frame=base_link]
+            node=camera_driver importance=ERROR type=IMAGE
+            msg="Camera feed frozen" image=640x480 enc=rgb8
         """
         ts = "unknown"
         try:
@@ -705,6 +681,7 @@ class AnomalyDetectionNode(Node):
 
         return base
 
+
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = AnomalyDetectionNode()
@@ -716,11 +693,10 @@ def main(args=None) -> None:
 
     try:
         executor.spin()
-    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+    except KeyboardInterrupt:
         pass
     finally:
         ## destroy trigger script nodes if they exist
-        
         if hasattr(node, "trigger_nodes"):
             for trigger_node in node.trigger_nodes:
                 trigger_node.destroy_node()
@@ -730,9 +706,8 @@ def main(args=None) -> None:
             node._stop_local_ollama()
         node.destroy_node()
         executor.shutdown()
+        rclpy.shutdown()
 
-        if rclpy.ok():
-            rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
