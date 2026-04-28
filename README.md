@@ -1,5 +1,5 @@
 # AI Anomaly Detection
-Last updated: 4/22/2026 (Sprint 5)
+Last updated: 4/28/2026 
 
 Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litellm.ai/docs/) or local Ollama model for determinations. 
 
@@ -10,8 +10,6 @@ Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litel
 5. LLM response standardization into `Decision` type using `response_handler.py`.
 6. Decision evaluation and alert publishing to `config.yaml:alert_topic`.
 7. `.bag` file of entire run context monitoring `config.yaml:raw_input_topic` if enabled in separate terminal.
-
-Sprint 5 will focus on finalized system documentation, scenario recordings/dataset creation, (potentially) security vulnerability addressing, and planning system evaluation methods.
 
 ## Prerequisites
 
