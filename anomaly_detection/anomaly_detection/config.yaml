@@ -30,7 +30,7 @@ llm:
 
 ## See README for trigger script details. These are paths under ./triggers containing ROS2 nodes.
 trigger_scripts: 
-- dummy_trigger
+# - dummy_trigger
 
 ## Where trigger scripts send messages to/where AAD system listens for trigger messages.
 trigger_input_topic: "/trigger_messages"
