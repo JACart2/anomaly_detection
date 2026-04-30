@@ -209,6 +209,9 @@ class AnomalyDetectionNode(Node):
         self.queue = deque(maxlen=self.cache_max_items)
         self._queue_lock = threading.Lock()
 
+        self.image_queue = deque(maxlen=self.cache_max_items)
+        self._image_queue_lock = threading.Lock()
+
         # Optional INFO throttling to protect context window
         self.throttle_info = bool(self.config.get("throttle_info", True))
         self.info_min_period_sec = float(self.config.get("info_min_period_sec", 1.0))
@@ -297,6 +300,15 @@ class AnomalyDetectionNode(Node):
                 f"Received {self._msg_count} messages on {self.raw_input_topic}"
             )
 
+        if msg.type == AnomalyMsg.IMAGE:
+            try:
+                with self._image_queue_lock:
+                    self.image_queue.append(msg.image)
+            except Exception as e:
+                self.get_logger().warn(
+                    f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
+                )
+
         # Optional INFO throttling
         if self.throttle_info and int(msg.importance) == AnomalyMsg.INFO:
             now = float(self.get_clock().now().nanoseconds) / 1e9
@@ -331,6 +343,10 @@ class AnomalyDetectionNode(Node):
             raw_list = list(self.queue)
             self.queue.clear()
 
+        with self._image_queue_lock:
+            raw_image_list = list(self.image_queue)
+            self.image_queue.clear()
+
         if not raw_list:
             return
 
@@ -341,9 +357,9 @@ class AnomalyDetectionNode(Node):
             msg.data = True
             self.llm_called_pub.publish(msg)
             if self.llm_local:
-                response = self.llm.local_chat(full_payload)
+                response = self.llm.local_chat(full_payload, raw_image_list)
             else:
-                response = self.llm.chat(full_payload)
+                response = self.llm.chat(full_payload, raw_image_list)
 
         except Exception as e:
             self.get_logger().warn(
