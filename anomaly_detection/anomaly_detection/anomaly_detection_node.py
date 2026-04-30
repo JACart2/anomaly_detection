@@ -33,6 +33,7 @@ from anomaly_msg.msg import AnomalyMsg
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from ollama import Client
+from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 
@@ -302,8 +303,19 @@ class AnomalyDetectionNode(Node):
 
         if msg.type == AnomalyMsg.IMAGE:
             try:
+                bridge = CvBridge()
+                cv_image = bridge.imgmsg_to_cv2(msg.image)
                 with self._image_queue_lock:
-                    self.image_queue.append(msg.image)
+                    self.image_queue.append(cv_image)
+            except Exception as e:
+                self.get_logger().warn(
+                    f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
+                )
+        else: 
+            try:
+                formatted = self._format_for_llm(msg)
+                with self._queue_lock:
+                    self.queue.append(formatted)
             except Exception as e:
                 self.get_logger().warn(
                     f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
@@ -315,15 +327,6 @@ class AnomalyDetectionNode(Node):
             if (now - self._last_info_time_sec) < self.info_min_period_sec:
                 return
             self._last_info_time_sec = now
-
-        try:
-            formatted = self._format_for_llm(msg)
-            with self._queue_lock:
-                self.queue.append(formatted)
-        except Exception as e:
-            self.get_logger().warn(
-                f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
-            )
 
     def llm_callback(self) -> None:
         """
@@ -347,7 +350,7 @@ class AnomalyDetectionNode(Node):
             raw_image_list = list(self.image_queue)
             self.image_queue.clear()
 
-        if not raw_list:
+        if not raw_list and not raw_image_list:
             return
 
         full_payload = "\n".join(raw_list)
