@@ -8,6 +8,8 @@ import base64
 import threading
 import os
 
+from std_msgs.msg import String as ROSString
+
 from flask import Flask, send_from_directory
 from flask_socketio import SocketIO
 from anomaly_msg.msg import AnomalyMsg
@@ -50,7 +52,7 @@ class AADBridge(Node):
             self.anomaly_callback,
             reliable_qos
         )
-        self.create_subscription(AnomalyMsg, '/decision', self.decision_callback, 10)
+        self.create_subscription(ROSString, '/aad/decisions', self.decision_callback, 10)
         self.get_logger().info(f"Dashboard serving from: {SCRIPT_DIR}")
 
     def decode_raw_image(self, img_msg):
@@ -89,9 +91,9 @@ class AADBridge(Node):
         }
         socketio.emit("anomaly_event", payload)
 
-    def decision_callback(self, msg):
+    def decision_callback(self, msg: ROSString):
         payload = {
-            "decision": msg.msg,
+            "decision": msg.data,
             "timestamp": self.get_clock().now().nanoseconds * 1e-9
         }
         socketio.emit("decision_event", payload)
