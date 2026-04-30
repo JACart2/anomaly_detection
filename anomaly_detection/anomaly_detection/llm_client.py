@@ -16,7 +16,7 @@ from ollama import Client
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-def encode_image(image_tensor: "np.ndarray") -> str:
+def encode_image(image_tensor) -> str:
     """
     Logic to convert a numpy image tensor into a string (to allow the model to receive the image).
     
@@ -29,6 +29,7 @@ def encode_image(image_tensor: "np.ndarray") -> str:
         str: The base64-encoded PNG string.
     
     """
+
     image = Image.fromarray(image_tensor)
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -154,7 +155,6 @@ class LLMClient:
         
         """
         
-
         messages = []
 
         if self.system_prompt:
