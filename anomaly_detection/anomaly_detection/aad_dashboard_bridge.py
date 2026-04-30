@@ -11,6 +11,7 @@ import os
 from flask import Flask, send_from_directory
 from flask_socketio import SocketIO
 from anomaly_msg.msg import AnomalyMsg
+from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 # Setup paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,34 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 class AADBridge(Node):
     def __init__(self):
         super().__init__('aad_dashboard_bridge')
-        self.create_subscription(AnomalyMsg, '/ai_anomaly_logging', self.anomaly_callback, 10)
+
+        # BEST EFFORT (camera, fast streams)
+        best_effort_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # RELIABLE (logs, structured data)
+        reliable_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        self.sub_best_effort = self.create_subscription(
+            AnomalyMsg,
+            '/ai_anomaly_logging',
+            self.anomaly_callback,
+            best_effort_qos
+        )
+
+        self.sub_reliable = self.create_subscription(
+            AnomalyMsg,
+            '/ai_anomaly_logging',
+            self.anomaly_callback,
+            reliable_qos
+        )
         self.create_subscription(AnomalyMsg, '/decision', self.decision_callback, 10)
         self.get_logger().info(f"Dashboard serving from: {SCRIPT_DIR}")
 

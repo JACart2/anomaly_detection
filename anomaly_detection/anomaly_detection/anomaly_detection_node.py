@@ -33,6 +33,8 @@ from anomaly_msg.msg import AnomalyMsg
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from ollama import Client
+from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
+
 
 from anomaly_detection.llm_client import LLMClient
 from anomaly_detection.response_handler import parse_llm_response, Decision
@@ -167,6 +169,21 @@ class AnomalyDetectionNode(Node):
         self.llm_local = bool(self.config.get("llm", {}).get("local", False))
         self._ollama_proc = None
 
+        ## import sub type profiles
+        # BEST EFFORT (camera, fast streams)
+        best_effort_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # RELIABLE (logs, structured data)
+        reliable_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
         # Standard topic defaults
         self.trigger_input_topic = self.config.get("trigger_input_topic", "/trigger_messages")
         self.raw_input_topic = self.config.get("raw_input_topic", "/ai_anomaly_logging")
@@ -215,11 +232,19 @@ class AnomalyDetectionNode(Node):
         )
 
         # Subscription to standardized logging topic
+        ## two different profile types to account for different pub modes to raw_input_topic
         self.create_subscription(
             AnomalyMsg,
             self.raw_input_topic,
             self.log_caching_callback,
-            10,
+            best_effort_qos
+        )
+
+        self.create_subscription(
+            AnomalyMsg,
+            self.raw_input_topic,
+            self.log_caching_callback,
+            reliable_qos,
         )
 
         self.create_subscription(
