@@ -1,5 +1,5 @@
 # AI Anomaly Detection
-Last updated: 4/22/2026 (Sprint 5)
+Last updated: 4/28/2026 
 
 Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litellm.ai/docs/) or local Ollama model for determinations. 
 
@@ -11,11 +11,9 @@ Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litel
 6. Decision evaluation and alert publishing to `config.yaml:alert_topic`.
 7. `.bag` file of entire run context monitoring `config.yaml:raw_input_topic` if enabled in separate terminal.
 
-Sprint 5 will focus on finalized system documentation, scenario recordings/dataset creation, (potentially) security vulnerability addressing, and planning system evaluation methods.
-
 ## Prerequisites
 
-_It is recommended that this system exists in a Docker container that shares a network with (or contains) the source of ROS2 topics publishing system data. See (https://github.com/JACart2/docker_files)_
+_It is recommended that this system exists in a Docker container that shares a network with (or contains) the source of ROS2 topics publishing system data. See (https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/Dockerfile)_
 
 * ROS2 installed
 * Requirements.txt. See (https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/requirements.txt)
@@ -118,3 +116,6 @@ This requires a `.env` file in the same folder as the AAD node, with API keys in
 ```
 
 See `config.yaml` for full deployment configuration options, including model selection, topic names, and trigger script registration.
+
+## Attributions
+Created by John Rosario Cruz (gr8jj28@gmail.com), Allie O'Keeffe, & Christopher Michael Hubbard.

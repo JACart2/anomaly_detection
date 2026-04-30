@@ -92,6 +92,8 @@ class AnomalyDetectionNode(Node):
     
         decision_pub (Publisher): ROS publisher for parsed LLM decisions (added for offline runner).
 
+        llm_called_pub (Publisher): ROS publisher to indicate when the LLM is called (added for offline runner).
+
         api_artifact_output_dir (str): Directory to write JSON artifacts containing LLM input and output. 
             Default: /root/dev_ws/src/anomaly_detection/log.
         
@@ -322,13 +324,13 @@ class AnomalyDetectionNode(Node):
             self.get_logger().warn(
                 f"[AAD] LLM call failed. See: {e}"
             )
-            self.decision_pub.publish(Decision(
-            anomaly=False,
-            severity="unknown",
-            action="none",
-            summary=f"LLM call failed. See: {e}",
-            raw=None,
-        ))
+            
+            decision_msg = ROSString()
+            decision_msg.data = (
+                f"anomaly=False severity=unknown "
+                f"action=LLM Call failed summary=LLM call Failed"
+            )
+            self.decision_pub.publish(decision_msg)
 
         # Create artifact even if API failed
         artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
