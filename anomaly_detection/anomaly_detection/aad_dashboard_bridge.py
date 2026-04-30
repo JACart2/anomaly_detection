@@ -28,18 +28,29 @@ class AADBridge(Node):
     def decode_raw_image(self, img_msg):
         try:
             img_np = np.frombuffer(img_msg.data, dtype=np.uint8)
-            img_reshaped = img_np.reshape((img_msg.height, img_msg.width, 3))
+
+            # Handle step safely (important for ROS images)
+            channels = 3
+            img_reshaped = img_np.reshape((img_msg.height, img_msg.step // channels, channels))
+            img_reshaped = img_reshaped[:, :img_msg.width, :]
+
+            # Convert color if needed
             if "rgb" in img_msg.encoding.lower():
                 img_reshaped = cv2.cvtColor(img_reshaped, cv2.COLOR_RGB2BGR)
+
+            # Downsample AFTER reshape
+            img_reshaped = cv2.resize(img_reshaped, (320, 180))
+
             success, buffer = cv2.imencode('.jpg', img_reshaped)
             if success:
                 return base64.b64encode(buffer).decode('utf-8')
+
         except Exception as e:
             self.get_logger().error(f"Decode error: {e}")
+
         return None
 
     def anomaly_callback(self, msg):
-        self.get_logger().info(f"RECEIVED ANOMALY: {msg.msg}")
 
         payload = {
             "node": msg.node_name,

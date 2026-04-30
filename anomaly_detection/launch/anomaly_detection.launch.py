@@ -28,6 +28,12 @@ def generate_launch_description():
         description='Output rosbag path (directory + name)'
     )
 
+    james_arg = DeclareLaunchArgument(
+        'launch_dashboard',
+        default_value='true',
+        description='When true, launches the dashboard viewer.'
+    )
+
     # # Navigation (James)
     # navigation_james = IncludeLaunchDescription(
     #     PythonLaunchDescriptionSource(
@@ -67,6 +73,13 @@ def generate_launch_description():
         output="screen",
     )
 
+    dashboard_node = Node(
+        package="anomaly_detection",
+        executable="AADBridge",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration('launch_dashboard'))
+    )
+
     # Rosbag recording
     bag_record = ExecuteProcess(
         cmd=[
@@ -84,6 +97,7 @@ def generate_launch_description():
         bag_name_arg,
         # navigation_james,
         # navigation_madison,
+        dashboard_node,
         ui_node,
         collision_node,
         anomaly_node,
