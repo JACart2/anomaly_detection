@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'anomaly_detection_node = anomaly_detection.anomaly_detection_node:main',
+            "aad_dashboard_bridge = anomaly_detection.aad_dashboard_bridge:main"
         ],
     },
 )
