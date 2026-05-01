@@ -57,21 +57,36 @@ class AADBridge(Node):
 
     def decode_raw_image(self, img_msg):
         try:
-            img_np = np.frombuffer(img_msg.data, dtype=np.uint8)
+            encoding = img_msg.encoding.lower()
 
-            # Handle step safely (important for ROS images)
-            channels = 3
-            img_reshaped = img_np.reshape((img_msg.height, img_msg.step // channels, channels))
-            img_reshaped = img_reshaped[:, :img_msg.width, :]
+            if encoding in ['rgb8', 'bgr8']:
+                channels = 3
+                dtype = np.uint8
+            elif encoding in ['rgba8', 'bgra8']:
+                channels = 4
+                dtype = np.uint8
+            elif encoding == 'mono8':
+                channels = 1
+                dtype = np.uint8
+            else:
+                raise ValueError(f"Unsupported encoding: {img_msg.encoding}")
 
-            # Convert color if needed
-            if "rgb" in img_msg.encoding.lower():
-                img_reshaped = cv2.cvtColor(img_reshaped, cv2.COLOR_RGB2BGR)
+            img_np = np.frombuffer(img_msg.data, dtype=dtype)
 
-            # Downsample AFTER reshape
-            img_reshaped = cv2.resize(img_reshaped, (320, 180))
+            bpp = channels * np.dtype(dtype).itemsize
+            row_width = img_msg.step // bpp
 
-            success, buffer = cv2.imencode('.jpg', img_reshaped)
+            img = img_np.reshape((img_msg.height, row_width, channels))
+            img = img[:, :img_msg.width, :]
+
+            if encoding == 'rgb8':
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            elif encoding == 'rgba8':
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+
+            img = cv2.resize(img, (320, 180))
+
+            success, buffer = cv2.imencode('.jpg', img)
             if success:
                 return base64.b64encode(buffer).decode('utf-8')
 
