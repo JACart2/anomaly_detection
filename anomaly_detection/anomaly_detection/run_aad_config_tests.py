@@ -14,6 +14,7 @@ import subprocess
 import threading
 import argparse
 import glob
+import statistics
 
 import rclpy
 from rclpy.node import Node
@@ -50,6 +51,8 @@ class AlertCollector(Node):
         self.alerts = []
         self.create_subscription(String, ALERT_TOPIC, self._callback, 10)
         self.create_subscription(Bool, LLM_CALLED_TOPIC, self._llm_callback, 10)
+        self.llm_called_time = None
+        self.latency_times = []
 
     def _callback(self, msg: String) -> None:
         """
@@ -60,6 +63,13 @@ class AlertCollector(Node):
         """
         self.get_logger().info(f"Alert received: {msg.data}")
         self.alerts.append(msg.data)
+        
+        
+        if self.llm_called_time is not None:
+            dt = (self.get_clock().now() - self.llm_called_time).nanoseconds / 1e9
+            self.get_logger().info(f"LLM latency: {dt:.3f} s")
+            self.llm_called_time = None
+            self.latency_times.append(dt)
 
     def _llm_callback(self, msg: Bool) -> None:
         """
@@ -70,10 +80,13 @@ class AlertCollector(Node):
         """
         self.get_logger().info(f"LLM called: {msg.data}")
         self.llm_called += 1
+        self.llm_called_time = self.get_clock().now()
 
     def reset(self):
         self.llm_called = 0
         self.alerts.clear()
+        self.latency_times.clear()
+        self.llm_called_time = None
 
 
 def parse_alert(alert_str: str) -> dict:
@@ -184,13 +197,14 @@ def _run_one_bag(
 
     while collector.llm_called != len(collector.alerts):
         time.sleep(0.5)
-        
+
     detected = len(collector.alerts) > 0
     correct  = detected == (expected == "Yes")
     status   = "✓" if correct else "✗"
     parsed   = [parse_alert(a) for a in collector.alerts]
+    avg_lat = statistics.mean(collector.latency_times)
 
-    print(f"{status} | expected={expected:3s} | detected={detected} | {category} — {description}")
+    print(f"{status} | expected={expected:3s} | detected={detected} | latency time={avg_lat} | {category} — {description}")
 
     if collector.alerts:
         for a in collector.alerts:
