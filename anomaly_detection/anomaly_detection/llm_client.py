@@ -1,18 +1,35 @@
+"""LLM client for anomaly detection. 
+Supports LiteLLM integration (requires WiFi connectivity and .env containing API keys).
+Supports local model integration on host machine via Ollama.
+
+Author: AAD Team Spring 26'
+Version: 4/21/26
+"""
 import os
 import litellm
 import yaml
 from io import BytesIO
 from PIL import Image
 import base64
-from ollama import Client
 from dotenv import load_dotenv
+from ollama import Client
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-def encode_image(image_tensor):
+def encode_image(image_tensor) -> str:
     """
-    Encode a numpy image array as base64 PNG string.
+    Logic to convert a numpy image tensor into a string (to allow the model to receive the image).
+    
+    Args
+    ----
+        image_tensor (np.ndarray): The numpy array representing the image.
+
+    Returns
+    -------
+        str: The base64-encoded PNG string.
+    
     """
+
     image = Image.fromarray(image_tensor)
     buffered = BytesIO()
     image.save(buffered, format="PNG")
@@ -20,6 +37,31 @@ def encode_image(image_tensor):
 
 
 class LLMClient:
+    """
+    Description
+    ------------
+        LLM Client that allows for llm contact through Litellm or Ollama (local) model.
+        Populates most attributes from config.yaml.
+    
+    Attributes
+    ----------
+        provider (str): The LLM provider (e.g., "openai", "anthropic").
+
+        model_name (str): The name of the LLM model. 
+
+        model (str): The full model identifier. This can be the same as model_name when calling Ollama.
+
+        api_base (str): The base URL for the LLM API. (Litellm use)
+
+        system_prompt (str): The system prompt for the LLM.
+
+    Methods
+    -------
+        method_name()
+            description
+    
+    """
+
     def __init__(self, config_path=None):
         # Always define attributes first
         self.provider = "openai"
@@ -53,8 +95,24 @@ class LLMClient:
 
         self.model = f"{self.provider}/{self.model_name}"
         self.api_base = os.getenv(f"{self.provider.upper()}_API_BASE", None)
+        self.ollama_client = Client(host="http://localhost:11434")
+
+
+    def chat(self, text: str, images=[]) -> str:
+        """
+        Call a LiteLLM model given some string data & optional images and return the response.
         
-    def chat(self, text, images=None):
+        Args
+        ----
+            text (str): Text data to pass to model.
+        
+            images (list): A list of images as numpy arrays. Will be encoded into string using encode_image().
+            
+        Returns
+        -------
+            str: The raw string response coming from the model. 
+        
+        """
         content = [{"type": "text", "text": text}]
 
         if images:
@@ -81,9 +139,9 @@ class LLMClient:
 
         return response.choices[0].message.content
 
-    def local_chat(self, text, images=None):
+    def local_chat(self, text: str, images=[]) -> str:
         """
-        Ping an Ollama hosted model given some data.
+        Call a local model hosted through Ollama given some string data & optional images and return the response.
         
         Args
         ----
@@ -96,6 +154,7 @@ class LLMClient:
             str: the models response
         
         """
+        
         messages = []
 
         if self.system_prompt:
@@ -107,13 +166,12 @@ class LLMClient:
 
         messages.append(user_message)
 
-        client = Client(host="http://localhost:11434")
-        response = client.chat(
+        response = self.ollama_client.chat(
             model=self.model_name,
             messages=messages,
             stream=False,
             format="json",
-            keep_alive="30m",
+            keep_alive="15m",
         )
 
         return response.message.content

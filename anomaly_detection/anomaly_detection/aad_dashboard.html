@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AAD Diagnostic Dashboard</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #status-bar { background: #333; padding: 5px 20px; font-size: 0.8em; display: flex; justify-content: space-between; }
+        .online { color: #0f0; } .offline { color: #f00; }
+        .main { display: flex; flex: 1; overflow: hidden; }
+        .panel { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #333; }
+        .content { flex: 1; overflow-y: auto; padding: 20px; }
+        .card { background: #1e1e1e; padding: 15px; margin-bottom: 10px; border-radius: 5px; border-left: 5px solid #555; }
+        .imp-0 { border-left-color: green; } .imp-1 { border-left-color: orange; } .imp-2 { border-left-color: red; }
+        img { width: 100%; margin-top: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div id="status-bar">
+    <span>AAD Bridge Status: <span id="status-text" class="offline">Disconnected</span></span>
+    <span id="last-msg">Last Message: None</span>
+
+    <button id="clear-btn" style="margin-left: 20px; padding: 3px 10px;">
+        Clear
+    </button>
+</div>
+
+<div class="main">
+    <div class="panel">
+        <h2 style="padding-left: 20px;">Anomalies</h2>
+        <div id="anomaly-stream" class="content"></div>
+    </div>
+    <div class="panel">
+        <h2 style="padding-left: 20px;">Decisions</h2>
+        <div id="decision-stream" class="content"></div>
+    </div>
+</div>
+
+<script>
+    const socket = io(); // Auto-detect host
+    const statusText = document.getElementById("status-text");
+    const lastMsgText = document.getElementById("last-msg");
+
+    socket.on("connect", () => {
+        statusText.innerText = "Connected";
+        statusText.className = "online";
+        console.log("✅ Socket.io Connected");
+    });
+
+    socket.on("disconnect", () => {
+        statusText.innerText = "Disconnected";
+        statusText.className = "offline";
+    });
+
+    socket.on("anomaly_event", (data) => {
+        console.log("Received Anomaly:", data);
+        lastMsgText.innerText = "Last Message: " + new Date().toLocaleTimeString();
+        const stream = document.getElementById("anomaly-stream");
+        const card = document.createElement("div");
+        card.className = `card imp-${data.importance}`;
+        card.innerHTML = `
+            <div style="font-size:0.8em; color:#888;">${data.node} | ${new Date(data.timestamp * 1000).toLocaleTimeString()}</div>
+            <div style="margin-top:5px;">${data.text}</div>
+            ${data.image ? `<img src="data:image/jpeg;base64,${data.image}">` : ''}
+        `;
+        stream.prepend(card);
+    });
+
+    socket.on("decision_event", (data) => {
+        console.log("Received Decision:", data);
+        const stream = document.getElementById("decision-stream");
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `<div>Decision: <b>${data.decision}</b></div>`;
+        stream.prepend(card);
+    });
+
+    document.getElementById("clear-btn").addEventListener("click", () => {
+
+    // Clear anomaly stream
+    document.getElementById("anomaly-stream").innerHTML = "";
+
+    // Clear decision stream
+    document.getElementById("decision-stream").innerHTML = "";
+
+    // Reset status text
+    document.getElementById("last-msg").innerText = "Last Message: None";
+
+    console.log("🧹 Dashboard cleared");
+});
+</script>
+</body>
+</html>

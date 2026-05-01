@@ -1,0 +1,12 @@
+[
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
+    "bag_file": "rosbag2_2026_04_22-17_52_00",
+    "category": "Mechanical issue",
+    "description": "Missing hearbeat",
+    "expected": "Yes",
+    "detected": false,
+    "correct": false,
+    "alerts": []
+  }
+]

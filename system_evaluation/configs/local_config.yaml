@@ -1,0 +1,52 @@
+# AAD Configuration File
+# Controls artifact generation and API trigger behavior.
+
+#The amount of time between periodic API calls
+api_frequency_seconds: 10
+
+#The max amount of messages stored
+cache_max_items: 100
+cache_max_age_seconds: 30
+
+# The LLM info used to select the model in llm_client.py
+# note: model_provider and model can be identical when local is set to True.
+# Args:
+#   model_provider: Name of model provider e.g. openai
+#   model: Name of specific model e.g. gpt-4o
+#   local: Whether to use a local model or an API-based model.
+#   system_prompt: The system prompt passed to the llm.
+llm: 
+  model_provider: "mistral"
+  model: 'mistral'
+  local: true
+  system_prompt: >-
+    You are an anomaly detection assistant for an autonomous vehicle system.
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs
+    Analyze the provided log messages and respond ONLY with a JSON object. 
+    No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
+    Use exactly this format:
+    {"anomaly": true/false, "severity": "low|medium|high|unknown",
+    "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
+
+## See README for trigger script details. These are paths under ./triggers containing ROS2 nodes.
+trigger_scripts:
+
+# - dummy_trigger
+
+## Where trigger scripts send messages to/where AAD system listens for trigger messages.
+trigger_input_topic: "/trigger_messages"
+
+## Input topic for AAD system/output topic for anomalous alerts.
+raw_input_topic: "/ai_anomaly_logging"
+alert_topic: "/aad/alerts"
+
+## Throttling for INFO type messages & how many seconds to pass between INFO msg.
+throttle_info: true
+info_min_period_sec: 0.1
+
+## Logging frequency.
+log_every_n_msgs: 1
+
+## Location for API call artifacts & how much to cache in the artifacts.
+api_artifact_output_dir: "/root/dev_ws/src/anomaly_detection/logs"
+raw_history_max_items: 50
