@@ -21,7 +21,7 @@ llm:
   local: true
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
-    Consider node sources, severity, message content, and other relevant aspects of the provided logs
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs. You will also be provided camera data facing the front and driver seat of the cart. DO not be alarmed by upside photos. 
     Analyze the provided log messages and respond ONLY with a JSON object. 
     No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
     Use exactly this format:

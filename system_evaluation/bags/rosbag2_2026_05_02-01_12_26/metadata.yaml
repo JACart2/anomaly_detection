@@ -1,0 +1,59 @@
+rosbag2_bagfile_information:
+  version: 9
+  storage_identifier: mcap
+  duration:
+    nanoseconds: 26636421164
+  starting_time:
+    nanoseconds_since_epoch: 1777684349839111800
+  message_count: 9
+  topics_with_message_count:
+    - topic_metadata:
+        name: /ai_anomaly_logging
+        type: anomaly_msg/msg/AnomalyMsg
+        serialization_format: cdr
+        offered_qos_profiles:
+          - history: unknown
+            depth: 0
+            reliability: best_effort
+            durability: volatile
+            deadline:
+              sec: 9223372036
+              nsec: 854775807
+            lifespan:
+              sec: 9223372036
+              nsec: 854775807
+            liveliness: automatic
+            liveliness_lease_duration:
+              sec: 9223372036
+              nsec: 854775807
+            avoid_ros_namespace_conventions: false
+          - history: unknown
+            depth: 0
+            reliability: reliable
+            durability: volatile
+            deadline:
+              sec: 9223372036
+              nsec: 854775807
+            lifespan:
+              sec: 9223372036
+              nsec: 854775807
+            liveliness: automatic
+            liveliness_lease_duration:
+              sec: 9223372036
+              nsec: 854775807
+            avoid_ros_namespace_conventions: false
+        type_description_hash: RIHS01_2ab2f15dd7647313d184d3925892ad5c98f912525d92f4c153cd1903d5aded41
+      message_count: 9
+  compression_format: ""
+  compression_mode: ""
+  relative_file_paths:
+    - rosbag2_2026_05_02-01_12_26_0.mcap
+  files:
+    - path: rosbag2_2026_05_02-01_12_26_0.mcap
+      starting_time:
+        nanoseconds_since_epoch: 1777684349839111800
+      duration:
+        nanoseconds: 26636421164
+      message_count: 9
+  custom_data: ~
+  ros_distro: jazzy
