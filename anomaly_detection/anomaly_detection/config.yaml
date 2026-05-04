@@ -16,8 +16,8 @@ cache_max_age_seconds: 30
 #   local: Whether to use a local model or an API-based model.
 #   system_prompt: The system prompt passed to the llm.
 llm: 
-  model_provider: "mistral"
-  model: 'mistral'
+  model_provider: "mistral-small"
+  model: 'mistral-small'
   local: true
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
