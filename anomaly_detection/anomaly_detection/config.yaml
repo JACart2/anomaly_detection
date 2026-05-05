@@ -16,12 +16,12 @@ cache_max_age_seconds: 30
 #   local: Whether to use a local model or an API-based model.
 #   system_prompt: The system prompt passed to the llm.
 llm: 
-  model_provider: "mistral-small"
-  model: 'mistral-small'
+  model_provider: "mistral"
+  model: 'mistral'
   local: true
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
-    Consider node sources, severity, message content, and other relevant aspects of the provided logs. You will also be provided camera data facing the front and driver seat of the cart. DO not be alarmed by upside photos. 
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs AND base64 encoded images. You will also be provided camera data facing the front and driver seat of the cart.
     Analyze the provided log messages and respond ONLY with a JSON object. 
     No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
     Use exactly this format:
