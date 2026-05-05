@@ -202,7 +202,10 @@ def _run_one_bag(
     correct  = detected == (expected == "Yes")
     status   = "✓" if correct else "✗"
     parsed   = [parse_alert(a) for a in collector.alerts]
-    avg_lat = statistics.mean(collector.latency_times)
+    if collector.latency_times != None:
+        avg_lat = statistics.mean(collector.latency_times)
+    else:
+        avg_lat="NA"
 
     print(f"{status} | expected={expected:3s} | detected={detected} | latency time={avg_lat} | {category} — {description}")
 
@@ -269,8 +272,8 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
                     ["ros2", "run", "anomaly_detection", "anomaly_detection_node"],
                     env=env,
                     start_new_session=True,
-                    # stdout=subprocess.DEVNULL,
-                    # stderr=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 time.sleep(NODE_STARTUP_GRACE_SEC)
 

@@ -1,12 +1,131 @@
 [
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
-    "bag_file": "rosbag2_2026_04_22-17_52_00",
-    "category": "Mechanical issue",
-    "description": "Missing hearbeat",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy 2.yaml",
+    "bag_file": "rosbag2_2026_05_02-01_11_59",
+    "category": "Driver issue",
+    "description": "Driver missing",
     "expected": "Yes",
-    "detected": false,
-    "correct": false,
-    "alerts": []
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Obstacle detected in front of the vehicle (base64 image analysis)",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Obstacle"
+      }
+    ]
+  },
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy 2.yaml",
+    "bag_file": "rosbag2_2026_05_02-01_12_26",
+    "category": "Driver issue",
+    "description": "Drive unconcious",
+    "expected": "Yes",
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Driver not wearing seatbelt and obstacle detected in front",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Driver"
+      }
+    ]
+  },
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy.yaml",
+    "bag_file": "rosbag2_2026_05_02-01_11_59",
+    "category": "Driver issue",
+    "description": "Driver missing",
+    "expected": "Yes",
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Pedestrian detected in front of the vehicle (crossing), sudden stop required for safety",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Pedestrian"
+      }
+    ]
+  },
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy.yaml",
+    "bag_file": "rosbag2_2026_05_02-01_12_26",
+    "category": "Driver issue",
+    "description": "Drive unconcious",
+    "expected": "Yes",
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Unexpected object detected in the front camera's field of view",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Unexpected"
+      },
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Pedestrian detected in front of the vehicle",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Pedestrian"
+      }
+    ]
+  },
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
+    "bag_file": "rosbag2_2026_05_02-01_11_59",
+    "category": "Driver issue",
+    "description": "Driver missing",
+    "expected": "Yes",
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Obstacle detected in the front camera feed",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Obstacle"
+      },
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Pedestrian detection in front of vehicle. Possible collision risk.",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Pedestrian"
+      }
+    ]
+  },
+  {
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
+    "bag_file": "rosbag2_2026_05_02-01_12_26",
+    "category": "Driver issue",
+    "description": "Drive unconcious",
+    "expected": "Yes",
+    "detected": true,
+    "correct": true,
+    "alerts": [
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Obstacle detected in front camera data.",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Obstacle"
+      },
+      {
+        "raw": "anomaly=True severity=high action=stop_cart summary=Obstacle detected in front camera image and driver not responding to warnings",
+        "anomaly": true,
+        "severity": "high",
+        "action": "stop_cart",
+        "summary": "Obstacle"
+      }
+    ]
   }
 ]
