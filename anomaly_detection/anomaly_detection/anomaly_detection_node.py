@@ -37,7 +37,7 @@ from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 
-from anomaly_detection.llm_client import LLMClient
+from anomaly_detection.llm_client import LLMClient, encode_image
 from anomaly_detection.response_handler import parse_llm_response, Decision
 
 
@@ -378,7 +378,8 @@ class AnomalyDetectionNode(Node):
 
         # Create artifact even if API failed
         artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
-        self._write_api_artifact(artifact_id, raw_list, response)
+        ## contain image data in raw_image_list as well (this gets b64 encoded in llm_client)
+        self._write_api_artifact(artifact_id, raw_list + [encode_image(img) for img in raw_image_list], response)
 
         # Try parsing decision if possible
         try:
@@ -524,6 +525,7 @@ class AnomalyDetectionNode(Node):
             str: The path to the created JSON artifact, or None if creation failed.
 
         """
+        
         try:
             os.makedirs(self.api_artifact_output_dir, exist_ok=True)
             artifact_path = os.path.join(

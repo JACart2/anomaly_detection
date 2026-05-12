@@ -76,11 +76,11 @@ def generate_launch_description():
     #     output="screen",
     # )
 
-    # anomaly_node = Node(
-    #     package="anomaly_detection",
-    #     executable="anomaly_detection_node",
-    #     output="screen",
-    # )
+    anomaly_node = Node(
+        package="anomaly_detection",
+        executable="anomaly_detection_node",
+        output="screen",
+    )
 
     dashboard_node = Node(
         package="anomaly_detection",
@@ -110,7 +110,7 @@ def generate_launch_description():
         launch_dashboard_command,
         ui_node,
         # collision_node,
-        # anomaly_node,
+        anomaly_node,
         bag_record
     ])
 
