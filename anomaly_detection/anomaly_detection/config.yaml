@@ -2,11 +2,11 @@
 # Controls artifact generation and API trigger behavior.
 
 #The amount of time between periodic API calls
-api_frequency_seconds: 15
+api_frequency_seconds: 10
 
 #The max amount of messages stored
 cache_max_items: 100
-cache_max_age_seconds: 30
+cache_max_age_seconds: 15
 
 # The LLM info used to select the model in llm_client.py
 # note: model_provider and model can be identical when local is set to True.
@@ -26,7 +26,7 @@ llm:
     No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
     Use exactly this format:
     {"anomaly": true/false, "severity": "low|medium|high|unknown",
-    "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
+    "action": "stop_cart|alert_admin|none", "summary": "explanation of the anomaly and the overall situation, including any relevant context from the logs. Always report on warnings and errors"}
 
 ## See README for trigger script details. These are paths under ./triggers containing ROS2 nodes.
 trigger_scripts: 
@@ -39,9 +39,11 @@ trigger_input_topic: "/trigger_messages"
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
 
-## Throttling for INFO type messages & how many seconds to pass between INFO msg.
+## Throttling for anomaly messages.
 throttle_info: true
 info_min_period_sec: 0.1
+duplicate_message_min_period_sec: 1.0
+error_capture_window_sec: 2.0
 
 ## Logging frequency.
 log_every_n_msgs: 1

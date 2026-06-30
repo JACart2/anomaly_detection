@@ -33,11 +33,12 @@ from anomaly_msg.msg import AnomalyMsg
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from ollama import Client
-from cv_bridge import CvBridge
+# from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 
-from anomaly_detection.llm_client import LLMClient, encode_image
+from anomaly_detection.llm_client import LLMClient
+# from anomaly_detection.llm_client import encode_image
 from anomaly_detection.response_handler import parse_llm_response, Decision
 
 
@@ -82,11 +83,17 @@ class AnomalyDetectionNode(Node):
 
         queue (deque): Thread-safe deque to cache formatted messages for LLM processing.
 
-        throttle_info (bool): Whether to throttle INFO messages to protect LLM context. 
+        throttle_info (bool): Whether to throttle messages to protect LLM context. 
             Default: True.
 
-        info_min_period_sec (float): Minimum period in seconds between INFO messages if throttling is enabled. 
+        info_min_period_sec (float): Minimum period in seconds between messages of the same importance if throttling is enabled. 
             Default: 1.0.
+
+        duplicate_message_min_period_sec (float): Minimum period in seconds before sending the same message to the LLM again.
+            Default: 5.0.
+
+        error_capture_window_sec (float): How long to collect context after an ERROR before calling the LLM.
+            Default: 2.0.
 
         log_every_n_msgs (int): How often to log received messages for debugging. 
             Default: 50.
@@ -109,7 +116,11 @@ class AnomalyDetectionNode(Node):
             
         _queue_lock (threading.Lock): Lock to protect access to the message cache queue.
 
-        _last_info_time_sec (float): Timestamp of the last INFO message processed, used for throttling.
+        _last_msg_time_by_importance (dict[int, float]): Timestamp of the last message processed per importance, used for throttling.
+
+        _last_message_signature (tuple | None): Signature of the last message sent to the LLM.
+
+        _last_message_sent_time_sec (float): Timestamp of the last message sent to the LLM.
 
         _msg_count (int): Counter for the number of messages received, used for periodic logging.
     
@@ -117,7 +128,7 @@ class AnomalyDetectionNode(Node):
     Methods
     -------
         log_caching_callback(msg: AnomalyMsg):
-            Callback for incoming AnomalyMsg messages. Caches them in a bounded deque after formatting for LLM. Optionally throttles INFO messages.
+            Callback for incoming AnomalyMsg messages. Caches them in a bounded deque after formatting for LLM. Optionally throttles messages.
     
         llm_callback():
             Timer-driven callback that processes cached messages with the LLM, parses the response, and publishes alerts if anomalies are detected. 
@@ -210,13 +221,25 @@ class AnomalyDetectionNode(Node):
         self.queue = deque(maxlen=self.cache_max_items)
         self._queue_lock = threading.Lock()
 
-        self.image_queue = deque(maxlen=self.cache_max_items)
-        self._image_queue_lock = threading.Lock()
+        # Image processing is disabled for now; IMAGE messages are ignored at intake.
+        # self.image_queue = deque(maxlen=self.cache_max_items)
+        # self._image_queue_lock = threading.Lock()
+        self._error_capture_lock = threading.Lock()
+        self._error_capture_timer = None
 
-        # Optional INFO throttling to protect context window
+        # Optional message throttling to protect context window
         self.throttle_info = bool(self.config.get("throttle_info", True))
         self.info_min_period_sec = float(self.config.get("info_min_period_sec", 1.0))
-        self._last_info_time_sec = 0.0
+        self._last_msg_time_by_importance = {}
+        self.error_capture_window_sec = float(self.config.get("error_capture_window_sec", 2.0))
+        self.duplicate_message_min_period_sec = float(
+            self.config.get(
+                "duplicate_message_min_period_sec",
+                self.config.get("same_error_min_period_sec", 5.0),
+            )
+        )
+        self._last_message_signature = None
+        self._last_message_sent_time_sec = 0.0
 
         # Debug logging controls
         self._msg_count = 0
@@ -283,6 +306,8 @@ class AnomalyDetectionNode(Node):
             f"cache_max_items={self.cache_max_items}, "
             f"throttle_info={self.throttle_info}, "
             f"info_min_period_sec={self.info_min_period_sec}, "
+            f"duplicate_message_min_period_sec={self.duplicate_message_min_period_sec}, "
+            f"error_capture_window_sec={self.error_capture_window_sec}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
         )
 
@@ -302,31 +327,59 @@ class AnomalyDetectionNode(Node):
             )
 
         if msg.type == AnomalyMsg.IMAGE:
-            try:
-                bridge = CvBridge()
-                cv_image = bridge.imgmsg_to_cv2(msg.image)
-                with self._image_queue_lock:
-                    self.image_queue.append(cv_image)
-            except Exception as e:
-                self.get_logger().warn(
-                    f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
-                )
-        else: 
-            try:
-                formatted = self._format_for_llm(msg)
-                with self._queue_lock:
-                    self.queue.append(formatted)
-            except Exception as e:
-                self.get_logger().warn(
-                    f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
-                )
+            self.get_logger().debug("Ignoring IMAGE AnomalyMsg while image processing is disabled.")
+            return
 
-        # Optional INFO throttling
-        if self.throttle_info and int(msg.importance) == AnomalyMsg.INFO:
-            now = float(self.get_clock().now().nanoseconds) / 1e9
-            if (now - self._last_info_time_sec) < self.info_min_period_sec:
+        # Optional message throttling by importance level
+        importance = int(msg.importance)
+        now = float(self.get_clock().now().nanoseconds) / 1e9
+        if self.throttle_info:
+            last_msg_time = self._last_msg_time_by_importance.get(importance, 0.0)
+            if (now - last_msg_time) < self.info_min_period_sec:
                 return
-            self._last_info_time_sec = now
+            self._last_msg_time_by_importance[importance] = now
+
+        message_signature = self._message_signature(msg)
+        if (
+            self.duplicate_message_min_period_sec > 0.0
+            and message_signature == self._last_message_signature
+            and (now - self._last_message_sent_time_sec) < self.duplicate_message_min_period_sec
+        ):
+            self.get_logger().info(
+                "[AAD] Delaying duplicate message to LLM; "
+                f"last sent {now - self._last_message_sent_time_sec:.2f}s ago."
+            )
+            return
+
+        is_high_severity = importance == AnomalyMsg.ERROR
+        formatted = None
+
+        try:
+            formatted = self._format_for_llm(msg)
+            with self._queue_lock:
+                self.queue.append(formatted)
+        except Exception as e:
+            self.get_logger().warn(
+                f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
+            )
+
+        # if msg.type == AnomalyMsg.IMAGE:
+        #     try:
+        #         bridge = CvBridge()
+        #         cv_image = bridge.imgmsg_to_cv2(msg.image)
+        #         with self._image_queue_lock:
+        #             self.image_queue.append(cv_image)
+        #     except Exception as e:
+        #         self.get_logger().warn(
+        #             f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
+        #         )
+        self._last_message_signature = message_signature
+        self._last_message_sent_time_sec = now
+
+        if is_high_severity:
+            summary = formatted or f"High severity message from {msg.node_name}"
+            self._publish_immediate_stop(summary)
+            self._schedule_error_capture_llm()
 
     def llm_callback(self) -> None:
         """
@@ -336,76 +389,85 @@ class AnomalyDetectionNode(Node):
         Flow
         ----
         - snapshot cache
-        - clear cache
         - call LLM/API
         - write a JSON artifact containing cached_data and api_response
         - parse with response handler
         - publish alert if anomaly
+        - remove the snapshot from cache
         """
-        with self._queue_lock:
-            raw_list = list(self.queue)
-            self.queue.clear()
-
-        with self._image_queue_lock:
-            raw_image_list = list(self.image_queue)
-            self.image_queue.clear()
-
-        if not raw_list and not raw_image_list:
-            return
-
-        full_payload = "\n".join(raw_list)
-        response = ""
         try:
-            msg = Bool()
-            msg.data = True
-            self.llm_called_pub.publish(msg)
-            if self.llm_local:
-                response = self.llm.local_chat(full_payload, raw_image_list)
-            else:
-                response = self.llm.chat(full_payload, raw_image_list)
+            with self._queue_lock:
+                raw_list = list(self.queue)
 
-        except Exception as e:
-            self.get_logger().warn(
-                f"[AAD] LLM call failed. See: {e}"
-            )
-            
-            decision_msg = ROSString()
-            decision_msg.data = (
-                f"anomaly=False severity=unknown "
-                f"action=LLM Call failed summary=LLM call Failed"
-            )
-            self.decision_pub.publish(decision_msg)
+            # with self._image_queue_lock:
+            #     raw_image_list = list(self.image_queue)
+            raw_image_list = []
 
-        # Create artifact even if API failed
-        artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
-        ## contain image data in raw_image_list as well (this gets b64 encoded in llm_client)
-        self._write_api_artifact(artifact_id, raw_list + [encode_image(img) for img in raw_image_list], response)
+            if not raw_list and not raw_image_list:
+                return
 
-        # Try parsing decision if possible
-        try:
-            decision = parse_llm_response(response)
+            try:
+                full_payload = "\n".join(raw_list)
+                response = ""
+                try:
+                    msg = Bool()
+                    msg.data = True
+                    self.llm_called_pub.publish(msg)
+                    if self.llm_local:
+                        response = self.llm.local_chat(full_payload)
+                    else:
+                        response = self.llm.chat(full_payload)
 
-            #### Added for the config tests 
-            decision_msg = ROSString()
-            decision_msg.data = (
-                f"anomaly={decision.anomaly} severity={decision.severity} "
-                f"action={decision.action} summary={decision.summary}"
-            )
-            self.decision_pub.publish(decision_msg)
-            ####
+                except Exception as e:
+                    self.get_logger().warn(
+                        f"[AAD] LLM call failed. See: {e}"
+                    )
+                    
+                    decision_msg = ROSString()
+                    decision_msg.data = (
+                        f"anomaly=False severity=unknown "
+                        f"action=LLM Call failed summary=LLM call Failed"
+                    )
+                    self.decision_pub.publish(decision_msg)
 
-            if decision.anomaly:
-                alert = ROSString()
-                alert.data = (
-                    f"[AAD ALERT] severity={decision.severity} "
-                    f"action={decision.action} summary={decision.summary}"
-                )
-                self.alert_pub.publish(alert)
+                # Create artifact even if API failed
+                artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
+                # Image artifacts are disabled while image processing is disabled.
+                # self._write_api_artifact(artifact_id, raw_list + [encode_image(img) for img in raw_image_list], response)
+                self._write_api_artifact(artifact_id, raw_list, response)
 
-        except Exception as e:
-            self.get_logger().warn(
-                f"[AAD] Could not parse decision during testing: {e}"
-            )
+                # Try parsing decision if possible
+                try:
+                    decision = parse_llm_response(response)
+
+                    #### Added for the config tests 
+                    decision_msg = ROSString()
+                    decision_msg.data = (
+                        f"anomaly={decision.anomaly} severity={decision.severity} "
+                        f"action={decision.action} summary={decision.summary}"
+                    )
+                    self.decision_pub.publish(decision_msg)
+                    ####
+
+                    if decision.anomaly:
+                        alert = ROSString()
+                        alert.data = (
+                            f"[AAD ALERT] severity={decision.severity} "
+                            f"action={decision.action} summary={decision.summary}"
+                        )
+                        self.alert_pub.publish(alert)
+
+                except Exception as e:
+                    self.get_logger().warn(
+                        f"[AAD] Could not parse decision during testing: {e}"
+                    )
+            finally:
+                self._remove_queue_snapshot(self.queue, self._queue_lock, raw_list)
+                # self._remove_queue_snapshot(
+                #     self.image_queue,
+                #     self._image_queue_lock,
+                #     raw_image_list,
+                # )
 
     def trigger_message_callback(self, msg: ROSString) -> None:
         """
@@ -420,9 +482,162 @@ class AnomalyDetectionNode(Node):
         with self._queue_lock:
             self.queue.append(msg.data)
         self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
-        ## TODO uncomment for actual llm testing
-        ##self.llm_callback() 
+        if self._is_high_severity_trigger(msg.data):
+            self._publish_immediate_stop(msg.data)
+        self._request_immediate_llm("trigger message")
         return
+
+    def _is_high_severity_trigger(self, text: str) -> bool:
+        """
+        Detect trigger strings that explicitly report high severity.
+        """
+        normalized = " ".join(str(text).lower().replace('"', "").replace("'", "").split())
+        high_severity_tokens = (
+            "severity=high",
+            "severity: high",
+            "severity high",
+            "importance=error",
+            "importance: error",
+            "importance error",
+            "high severity",
+        )
+        return any(token in normalized for token in high_severity_tokens)
+
+    def _queue_items_match(self, current: object, expected: object) -> bool:
+        """
+        Compare queue items without forcing array-like objects into truth values.
+        """
+        if current is expected:
+            return True
+
+        try:
+            return bool(current == expected)
+        except Exception:
+            return False
+
+    def _remove_queue_snapshot(self, queue: deque, lock: threading.Lock, snapshot: list) -> None:
+        """
+        Remove snapshot items from the front of a queue after LLM response handling.
+        """
+        if not snapshot:
+            return
+
+        with lock:
+            for item in snapshot:
+                if not queue:
+                    return
+                if not self._queue_items_match(queue[0], item):
+                    return
+                queue.popleft()
+
+    def _has_queued_context(self) -> bool:
+        """
+        Return whether any queued text or image context is waiting for the LLM.
+        """
+        with self._queue_lock:
+            has_text = bool(self.queue)
+
+        # with self._image_queue_lock:
+        #     has_images = bool(self.image_queue)
+        has_images = False
+
+        return has_text or has_images
+
+    def _message_signature(self, msg: AnomalyMsg) -> tuple:
+        """
+        Build a stable duplicate key for messages, ignoring timestamp.
+        """
+        image_signature = None
+        if msg.type == AnomalyMsg.IMAGE:
+            try:
+                image_signature = (
+                    int(msg.image.width),
+                    int(msg.image.height),
+                    str(msg.image.encoding),
+                )
+            except Exception:
+                image_signature = ("image", "unavailable")
+
+        data_signature = None
+        if msg.type == AnomalyMsg.DATA:
+            try:
+                data_signature = (str(msg.data_type), len(msg.data), tuple(msg.data))
+            except Exception:
+                data_signature = ("data", "unavailable")
+
+        return (
+            str(msg.node_name),
+            int(msg.importance),
+            int(msg.type),
+            str(msg.msg),
+            image_signature,
+            data_signature,
+        )
+
+    def _publish_immediate_stop(self, summary: str) -> None:
+        """
+        Publish a high-severity stop decision without waiting for the LLM.
+        """
+        clean_summary = " ".join(str(summary).split())
+
+        decision_msg = ROSString()
+        decision_msg.data = (
+            f"anomaly=True severity=high "
+            f"action=stop_cart summary={clean_summary}"
+        )
+        self.decision_pub.publish(decision_msg)
+
+        alert = ROSString()
+        alert.data = (
+            f"[AAD ALERT] severity=high "
+            f"action=stop_cart summary={clean_summary}"
+        )
+        self.alert_pub.publish(alert)
+
+    def _request_immediate_llm(self, reason: str) -> None:
+        """
+        Run the LLM callback now, unless another LLM call is already active.
+        """
+        self.get_logger().info(f"[AAD] Immediate LLM requested by {reason}.")
+        self.llm_callback()
+
+    def _schedule_error_capture_llm(self) -> None:
+        """
+        Collect additional context after an ERROR before sending the queue to the LLM.
+        """
+        if self.error_capture_window_sec <= 0.0:
+            self._request_immediate_llm("high severity anomaly message")
+            return
+
+        with self._error_capture_lock:
+            if self._error_capture_timer is not None:
+                self.get_logger().info(
+                    "[AAD] ERROR capture window already active; continuing to collect context."
+                )
+                return
+
+            self.get_logger().info(
+                f"[AAD] ERROR received; collecting {self.error_capture_window_sec:.2f}s "
+                "of additional context before LLM call."
+            )
+            self._error_capture_timer = self.create_timer(
+                self.error_capture_window_sec,
+                self._error_capture_timer_callback,
+            )
+
+    def _error_capture_timer_callback(self) -> None:
+        """
+        End the ERROR capture window and request the LLM.
+        """
+        with self._error_capture_lock:
+            timer = self._error_capture_timer
+            self._error_capture_timer = None
+
+        if timer is not None:
+            timer.cancel()
+            self.destroy_timer(timer)
+
+        self._request_immediate_llm("error capture window")
 
     def _is_ollama_ready(self) -> bool:
         """
