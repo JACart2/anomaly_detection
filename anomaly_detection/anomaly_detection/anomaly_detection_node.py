@@ -39,7 +39,7 @@ from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 from anomaly_detection.llm_client import LLMClient
 # from anomaly_detection.llm_client import encode_image
-from anomaly_detection.response_handler import parse_llm_response, Decision
+from anomaly_detection.response_handler import parse_llm_response
 
 
 class AnomalyDetectionNode(Node):
@@ -50,7 +50,7 @@ class AnomalyDetectionNode(Node):
         - Subscribes to /ai_anomaly_logging (standardized logging topic)
         - Caches a bounded, LLM-friendly representation of AnomalyMsg
         - Periodically calls the LLM/API (or on-demand through trigger topic)
-        - Parses result via response_handler into a Decision
+        - Parses result via response_handler
         - Publishes alerts to /aad/alerts when anomalies are detected
         - Leaves JSON artifacts behind of cache -> LLM response in ./logs.
         - Optionally creates API-triggered rosbag artifacts if configured
@@ -86,6 +86,9 @@ class AnomalyDetectionNode(Node):
         duplicate_message_min_period_sec (float): Minimum period in seconds before sending the same message to the LLM again.
             Default: 5.0.
 
+        publisher_message_min_period_by_importance (dict): Minimum period in seconds between accepted messages from
+            the same publisher and importance level. Defaults to no publisher-level limit.
+
         error_capture_window_sec (float): How long to collect context after an ERROR before calling the LLM.
             Default: 2.0.
 
@@ -110,9 +113,9 @@ class AnomalyDetectionNode(Node):
             
         _queue_lock (threading.Lock): Lock to protect access to the message cache queue.
 
-        _last_message_signature (tuple | None): Signature of the last message sent to the LLM.
+        _last_message_sent_times (dict): Last accepted timestamp for each message signature.
 
-        _last_message_sent_time_sec (float): Timestamp of the last message sent to the LLM.
+        _last_publisher_message_sent_times (dict): Last accepted timestamp for each publisher/importance pair.
 
         _msg_count (int): Counter for the number of messages received, used for periodic logging.
     
@@ -226,8 +229,11 @@ class AnomalyDetectionNode(Node):
                 self.config.get("same_error_min_period_sec", 5.0),
             )
         )
-        self._last_message_signature = None
-        self._last_message_sent_time_sec = 0.0
+        self._last_message_sent_times = {}
+        self.publisher_message_min_period_by_importance = (
+            self._load_publisher_message_min_periods()
+        )
+        self._last_publisher_message_sent_times = {}
 
         # Debug logging controls
         self._msg_count = 0
@@ -293,6 +299,7 @@ class AnomalyDetectionNode(Node):
             f"api_frequency_seconds={self.api_frequency_seconds}, "
             f"cache_max_items={self.cache_max_items}, "
             f"duplicate_message_min_period_sec={self.duplicate_message_min_period_sec}, "
+            f"publisher_message_min_period_by_importance={self.publisher_message_min_period_by_importance}, "
             f"error_capture_window_sec={self.error_capture_window_sec}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
         )
@@ -321,18 +328,37 @@ class AnomalyDetectionNode(Node):
 
         now = time.monotonic()
         message_signature = self._message_signature(msg)
+        last_message_sent_time = self._last_message_sent_times.get(message_signature)
         if (
             self.duplicate_message_min_period_sec > 0.0
-            and message_signature == self._last_message_signature
-            and (now - self._last_message_sent_time_sec) < self.duplicate_message_min_period_sec
+            and last_message_sent_time is not None
+            and (now - last_message_sent_time) < self.duplicate_message_min_period_sec
         ):
             self.get_logger().info(
                 "[AAD] Delaying duplicate message to LLM; "
-                f"last sent {now - self._last_message_sent_time_sec:.2f}s ago."
+                f"last sent {now - last_message_sent_time:.2f}s ago."
             )
             return
 
         importance = int(msg.importance)
+        publisher_key = self._publisher_rate_limit_key(msg)
+        publisher_min_period_sec = self._publisher_message_min_period_sec(importance)
+        last_publisher_message_sent_time = self._last_publisher_message_sent_times.get(
+            publisher_key
+        )
+        if (
+            publisher_min_period_sec > 0.0
+            and last_publisher_message_sent_time is not None
+            and (now - last_publisher_message_sent_time) < publisher_min_period_sec
+        ):
+            publisher_name, importance_name = publisher_key
+            self.get_logger().info(
+                "[AAD] Limiting message from publisher; "
+                f"publisher={publisher_name}, importance={importance_name}, "
+                f"last accepted {now - last_publisher_message_sent_time:.2f}s ago."
+            )
+            return
+
         is_high_severity = importance == AnomalyMsg.ERROR
         formatted = None
 
@@ -357,8 +383,10 @@ class AnomalyDetectionNode(Node):
         #         self.get_logger().warn(
         #             f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
         #         )
-        self._last_message_signature = message_signature
-        self._last_message_sent_time_sec = now
+        self._last_message_sent_times[message_signature] = now
+        self._prune_duplicate_message_history(now)
+        self._last_publisher_message_sent_times[publisher_key] = now
+        self._prune_publisher_message_history(now)
 
         if is_high_severity:
             summary = formatted or f"High severity message from {msg.node_name}"
@@ -518,19 +546,6 @@ class AnomalyDetectionNode(Node):
                     return
                 queue.popleft()
 
-    def _has_queued_context(self) -> bool:
-        """
-        Return whether any queued text or image context is waiting for the LLM.
-        """
-        with self._queue_lock:
-            has_text = bool(self.queue)
-
-        # with self._image_queue_lock:
-        #     has_images = bool(self.image_queue)
-        has_images = False
-
-        return has_text or has_images
-
     def _message_signature(self, msg: AnomalyMsg) -> tuple:
         """
         Build a stable duplicate key for messages, ignoring timestamp.
@@ -561,6 +576,85 @@ class AnomalyDetectionNode(Node):
             image_signature,
             data_signature,
         )
+
+    def _prune_duplicate_message_history(self, now: float) -> None:
+        """
+        Drop duplicate-tracking entries that are older than the configured window.
+        """
+        if self.duplicate_message_min_period_sec <= 0.0:
+            self._last_message_sent_times.clear()
+            return
+
+        stale_cutoff = now - self.duplicate_message_min_period_sec
+        for signature, sent_time in list(self._last_message_sent_times.items()):
+            if sent_time < stale_cutoff:
+                del self._last_message_sent_times[signature]
+
+    def _publisher_rate_limit_key(self, msg: AnomalyMsg) -> tuple[str, str]:
+        """
+        Build the publisher-level rate-limit key.
+        """
+        publisher = str(msg.node_name or "").strip()
+        if not publisher:
+            try:
+                publisher = str(msg.header.frame_id or "").strip()
+            except Exception:
+                publisher = ""
+        if not publisher:
+            publisher = "unknown"
+
+        return (publisher, self._importance_to_str(int(msg.importance)).lower())
+
+    def _publisher_message_min_period_sec(self, importance: int) -> float:
+        """
+        Return the configured publisher rate-limit window for an importance level.
+        """
+        importance_name = self._importance_to_str(importance).lower()
+        return float(
+            self.publisher_message_min_period_by_importance.get(
+                importance_name,
+                self.publisher_message_min_period_by_importance.get("default", 0.0),
+            )
+        )
+
+    def _load_publisher_message_min_periods(self) -> dict[str, float]:
+        """
+        Load per-publisher rate-limit windows from config.
+        """
+        configured = self.config.get("publisher_message_min_period_sec", {})
+        if isinstance(configured, (int, float)):
+            return {"default": float(configured)}
+
+        if not isinstance(configured, dict):
+            return {}
+
+        periods = {}
+        for key, value in configured.items():
+            try:
+                periods[str(key).lower()] = float(value)
+            except (TypeError, ValueError):
+                self.get_logger().warn(
+                    f"Ignoring invalid publisher_message_min_period_sec value for {key}: {value}"
+                )
+        return periods
+
+    def _prune_publisher_message_history(self, now: float) -> None:
+        """
+        Drop publisher-rate-limit entries that are older than the largest configured window.
+        """
+        if not self.publisher_message_min_period_by_importance:
+            self._last_publisher_message_sent_times.clear()
+            return
+
+        max_window = max(self.publisher_message_min_period_by_importance.values())
+        if max_window <= 0.0:
+            self._last_publisher_message_sent_times.clear()
+            return
+
+        stale_cutoff = now - max_window
+        for key, sent_time in list(self._last_publisher_message_sent_times.items()):
+            if sent_time < stale_cutoff:
+                del self._last_publisher_message_sent_times[key]
 
     def _publish_immediate_stop(self, summary: str) -> None:
         """

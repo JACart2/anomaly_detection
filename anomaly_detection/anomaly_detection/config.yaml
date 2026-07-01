@@ -15,21 +15,21 @@ cache_max_age_seconds: 30
 #   model: Name of specific model e.g. gpt-4o
 #   local: Whether to use a local model or an API-based model.
 #   system_prompt: The system prompt passed to the llm.
-llm: 
+llm:
   model_provider: "mistral"
   model: 'mistral'
   local: true
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
     Consider node sources, severity, message content, and other relevant aspects of the provided logs AND base64 encoded images. You will also be provided camera data facing the front and driver seat of the cart.
-    Analyze the provided log messages and respond ONLY with a JSON object. 
+    Analyze the provided log messages and respond ONLY with a JSON object.
     No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
     Use exactly this format:
     {"anomaly": true/false, "severity": "low|medium|high|unknown",
     "action": "stop_cart|alert_admin|none", "summary": "explanation of the anomaly and the overall situation, including any relevant context from the logs. Always report on warnings and errors"}
 
 ## See README for trigger script details. These are paths under ./triggers containing ROS2 nodes.
-trigger_scripts: 
+trigger_scripts:
 # - dummy_trigger
 
 ## Where trigger scripts send messages to/where AAD system listens for trigger messages.
@@ -40,7 +40,16 @@ raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
 
 ## Duplicate blocking for anomaly messages.
-duplicate_message_min_period_sec: 1.0
+duplicate_message_min_period_sec: 2.0
+
+## Publisher-level rate limiting by severity.
+## Limits messages from the same node_name and importance bucket.
+## Set a value to 0.0 to disable limiting for that severity.
+publisher_message_min_period_sec:
+  info: 5.0
+  warning: 3.0
+  error: 0.0
+
 error_capture_window_sec: 2.0
 
 ## Logging frequency.
