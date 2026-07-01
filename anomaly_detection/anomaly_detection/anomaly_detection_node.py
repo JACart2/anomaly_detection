@@ -83,12 +83,6 @@ class AnomalyDetectionNode(Node):
 
         queue (deque): Thread-safe deque to cache formatted messages for LLM processing.
 
-        throttle_info (bool): Whether to throttle messages to protect LLM context. 
-            Default: True.
-
-        info_min_period_sec (float): Minimum period in seconds between messages of the same importance if throttling is enabled. 
-            Default: 1.0.
-
         duplicate_message_min_period_sec (float): Minimum period in seconds before sending the same message to the LLM again.
             Default: 5.0.
 
@@ -116,8 +110,6 @@ class AnomalyDetectionNode(Node):
             
         _queue_lock (threading.Lock): Lock to protect access to the message cache queue.
 
-        _last_msg_time_by_importance (dict[int, float]): Timestamp of the last message processed per importance, used for throttling.
-
         _last_message_signature (tuple | None): Signature of the last message sent to the LLM.
 
         _last_message_sent_time_sec (float): Timestamp of the last message sent to the LLM.
@@ -128,7 +120,7 @@ class AnomalyDetectionNode(Node):
     Methods
     -------
         log_caching_callback(msg: AnomalyMsg):
-            Callback for incoming AnomalyMsg messages. Caches them in a bounded deque after formatting for LLM. Optionally throttles messages.
+            Callback for incoming AnomalyMsg messages. Caches them in a bounded deque after formatting for LLM.
     
         llm_callback():
             Timer-driven callback that processes cached messages with the LLM, parses the response, and publishes alerts if anomalies are detected. 
@@ -227,10 +219,6 @@ class AnomalyDetectionNode(Node):
         self._error_capture_lock = threading.Lock()
         self._error_capture_timer = None
 
-        # Optional message throttling to protect context window
-        self.throttle_info = bool(self.config.get("throttle_info", True))
-        self.info_min_period_sec = float(self.config.get("info_min_period_sec", 1.0))
-        self._last_msg_time_by_importance = {}
         self.error_capture_window_sec = float(self.config.get("error_capture_window_sec", 2.0))
         self.duplicate_message_min_period_sec = float(
             self.config.get(
@@ -304,8 +292,6 @@ class AnomalyDetectionNode(Node):
             f"alert_topic={self.alert_topic}, "
             f"api_frequency_seconds={self.api_frequency_seconds}, "
             f"cache_max_items={self.cache_max_items}, "
-            f"throttle_info={self.throttle_info}, "
-            f"info_min_period_sec={self.info_min_period_sec}, "
             f"duplicate_message_min_period_sec={self.duplicate_message_min_period_sec}, "
             f"error_capture_window_sec={self.error_capture_window_sec}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
@@ -333,15 +319,7 @@ class AnomalyDetectionNode(Node):
             self.get_logger().info("Ignoring IMAGE AnomalyMsg while image processing is disabled.")
             return
 
-        # Optional message throttling by importance level
-        importance = int(msg.importance)
         now = time.monotonic()
-        if self.throttle_info:
-            last_msg_time = self._last_msg_time_by_importance.get(importance, 0.0)
-            if (now - last_msg_time) < self.info_min_period_sec:
-                return
-            self._last_msg_time_by_importance[importance] = now
-
         message_signature = self._message_signature(msg)
         if (
             self.duplicate_message_min_period_sec > 0.0
@@ -354,6 +332,7 @@ class AnomalyDetectionNode(Node):
             )
             return
 
+        importance = int(msg.importance)
         is_high_severity = importance == AnomalyMsg.ERROR
         formatted = None
 

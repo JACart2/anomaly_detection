@@ -41,9 +41,8 @@ trigger_input_topic: "/trigger_messages"
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
 
-## Throttling for INFO type messages & how many seconds to pass between INFO msg.
-throttle_info: true
-info_min_period_sec: 0.1
+## Duplicate blocking for anomaly messages.
+duplicate_message_min_period_sec: 1.0
 
 ## Logging frequency.
 log_every_n_msgs: 1
