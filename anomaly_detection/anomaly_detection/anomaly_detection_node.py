@@ -30,7 +30,7 @@ from collections import deque
 import rclpy
 import yaml
 from anomaly_msg.msg import AnomalyMsg
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from ollama import Client
 # from cv_bridge import CvBridge
@@ -281,7 +281,7 @@ class AnomalyDetectionNode(Node):
             10,
         )
 
-        self.create_timer(self.api_frequency_seconds, self.llm_callback)
+        self.api_timer = self.create_timer(self.api_frequency_seconds, self.llm_callback)
 
         # Start local Ollama once, before first inference
         if self.llm_local:
@@ -310,6 +310,9 @@ class AnomalyDetectionNode(Node):
             f"error_capture_window_sec={self.error_capture_window_sec}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
         )
+        self.get_logger().info(
+            f"[AAD] Periodic LLM timer armed for every {self.api_frequency_seconds:.2f}s."
+        )
 
     def log_caching_callback(self, msg: AnomalyMsg) -> None:
         """
@@ -327,12 +330,12 @@ class AnomalyDetectionNode(Node):
             )
 
         if msg.type == AnomalyMsg.IMAGE:
-            self.get_logger().debug("Ignoring IMAGE AnomalyMsg while image processing is disabled.")
+            self.get_logger().info("Ignoring IMAGE AnomalyMsg while image processing is disabled.")
             return
 
         # Optional message throttling by importance level
         importance = int(msg.importance)
-        now = float(self.get_clock().now().nanoseconds) / 1e9
+        now = time.monotonic()
         if self.throttle_info:
             last_msg_time = self._last_msg_time_by_importance.get(importance, 0.0)
             if (now - last_msg_time) < self.info_min_period_sec:
@@ -358,6 +361,8 @@ class AnomalyDetectionNode(Node):
             formatted = self._format_for_llm(msg)
             with self._queue_lock:
                 self.queue.append(formatted)
+                queue_size = len(self.queue)
+            self.get_logger().info(f"[AAD] Queued message for LLM; queue_size={queue_size}")
         except Exception as e:
             self.get_logger().warn(
                 f"Line {sys._getframe().f_lineno}: Failed to cache message safely: {e}"
@@ -395,79 +400,83 @@ class AnomalyDetectionNode(Node):
         - publish alert if anomaly
         - remove the snapshot from cache
         """
+        with self._queue_lock:
+            raw_list = list(self.queue)
+
+        # with self._image_queue_lock:
+        #     raw_image_list = list(self.image_queue)
+        raw_image_list = []
+
+        if not raw_list and not raw_image_list:
+            self.get_logger().info("[AAD] LLM callback fired with no queued context; skipping call.")
+            return
+
+        self.get_logger().info(
+            f"[AAD] LLM callback processing {len(raw_list)} text messages."
+        )
+
         try:
-            with self._queue_lock:
-                raw_list = list(self.queue)
-
-            # with self._image_queue_lock:
-            #     raw_image_list = list(self.image_queue)
-            raw_image_list = []
-
-            if not raw_list and not raw_image_list:
-                return
-
+            full_payload = "\n".join(raw_list)
+            response = ""
             try:
-                full_payload = "\n".join(raw_list)
-                response = ""
-                try:
-                    msg = Bool()
-                    msg.data = True
-                    self.llm_called_pub.publish(msg)
-                    if self.llm_local:
-                        response = self.llm.local_chat(full_payload)
-                    else:
-                        response = self.llm.chat(full_payload)
+                msg = Bool()
+                msg.data = True
+                self.llm_called_pub.publish(msg)
+                if self.llm_local:
+                    response = self.llm.local_chat(full_payload)
+                else:
+                    response = self.llm.chat(full_payload)
 
-                except Exception as e:
-                    self.get_logger().warn(
-                        f"[AAD] LLM call failed. See: {e}"
-                    )
-                    
-                    decision_msg = ROSString()
-                    decision_msg.data = (
-                        f"anomaly=False severity=unknown "
-                        f"action=LLM Call failed summary=LLM call Failed"
-                    )
-                    self.decision_pub.publish(decision_msg)
+            except Exception as e:
+                self.get_logger().warn(
+                    f"[AAD] LLM call failed. See: {e}"
+                )
+                
+                decision_msg = ROSString()
+                decision_msg.data = (
+                    f"anomaly=False severity=unknown "
+                    f"action=LLM Call failed summary=LLM call Failed"
+                )
+                self.decision_pub.publish(decision_msg)
 
-                # Create artifact even if API failed
-                artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
-                # Image artifacts are disabled while image processing is disabled.
-                # self._write_api_artifact(artifact_id, raw_list + [encode_image(img) for img in raw_image_list], response)
-                self._write_api_artifact(artifact_id, raw_list, response)
+            # Create artifact even if API failed
+            artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
+            # Image artifacts are disabled while image processing is disabled.
+            # self._write_api_artifact(artifact_id, raw_list + [encode_image(img) for img in raw_image_list], response)
+            self._write_api_artifact(artifact_id, raw_list, response)
 
-                # Try parsing decision if possible
-                try:
-                    decision = parse_llm_response(response)
+            # Try parsing decision if possible
+            try:
+                decision = parse_llm_response(response)
 
-                    #### Added for the config tests 
-                    decision_msg = ROSString()
-                    decision_msg.data = (
-                        f"anomaly={decision.anomaly} severity={decision.severity} "
+                #### Added for the config tests 
+                decision_msg = ROSString()
+                decision_msg.data = (
+                    f"anomaly={decision.anomaly} severity={decision.severity} "
+                    f"action={decision.action} summary={decision.summary}"
+                )
+                self.decision_pub.publish(decision_msg)
+                ####
+
+                if decision.anomaly:
+                    alert = ROSString()
+                    alert.data = (
+                        f"[AAD ALERT] severity={decision.severity} "
                         f"action={decision.action} summary={decision.summary}"
                     )
-                    self.decision_pub.publish(decision_msg)
-                    ####
+                    self.alert_pub.publish(alert)
 
-                    if decision.anomaly:
-                        alert = ROSString()
-                        alert.data = (
-                            f"[AAD ALERT] severity={decision.severity} "
-                            f"action={decision.action} summary={decision.summary}"
-                        )
-                        self.alert_pub.publish(alert)
-
-                except Exception as e:
-                    self.get_logger().warn(
-                        f"[AAD] Could not parse decision during testing: {e}"
-                    )
-            finally:
-                self._remove_queue_snapshot(self.queue, self._queue_lock, raw_list)
-                # self._remove_queue_snapshot(
-                #     self.image_queue,
-                #     self._image_queue_lock,
-                #     raw_image_list,
-                # )
+            except Exception as e:
+                self.get_logger().warn(
+                    f"[AAD] Could not parse decision during testing: {e}"
+                )
+        finally:
+            self._remove_queue_snapshot(self.queue, self._queue_lock, raw_list)
+            # self._remove_queue_snapshot(
+            #     self.image_queue,
+            #     self._image_queue_lock,
+            #     raw_image_list,
+            # )
 
     def trigger_message_callback(self, msg: ROSString) -> None:
         """
@@ -596,7 +605,7 @@ class AnomalyDetectionNode(Node):
 
     def _request_immediate_llm(self, reason: str) -> None:
         """
-        Run the LLM callback now, unless another LLM call is already active.
+        Run the LLM callback now.
         """
         self.get_logger().info(f"[AAD] Immediate LLM requested by {reason}.")
         self.llm_callback()
@@ -971,7 +980,7 @@ class AnomalyDetectionNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = AnomalyDetectionNode()
-    executor = MultiThreadedExecutor()
+    executor = SingleThreadedExecutor()
     executor.add_node(node)
     if hasattr(node, "trigger_nodes"):
         for trigger_node in node.trigger_nodes:

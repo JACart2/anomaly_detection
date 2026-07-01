@@ -2,11 +2,11 @@
 # Controls artifact generation and API trigger behavior.
 
 #The amount of time between periodic API calls
-api_frequency_seconds: 10
+api_frequency_seconds: 20
 
 #The max amount of messages stored
 cache_max_items: 100
-cache_max_age_seconds: 15
+cache_max_age_seconds: 30
 
 # The LLM info used to select the model in llm_client.py
 # note: model_provider and model can be identical when local is set to True.
@@ -40,9 +40,9 @@ raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
 
 ## Throttling for anomaly messages.
-throttle_info: true
+throttle_info: false
 info_min_period_sec: 0.1
-duplicate_message_min_period_sec: 1.0
+duplicate_message_min_period_sec: 0.5
 error_capture_window_sec: 2.0
 
 ## Logging frequency.
@@ -50,4 +50,3 @@ log_every_n_msgs: 1
 
 ## Location for API call artifacts & how much to cache in the artifacts.
 api_artifact_output_dir: "/root/dev_ws/src/anomaly_detection/logs"
-raw_history_max_items: 50
