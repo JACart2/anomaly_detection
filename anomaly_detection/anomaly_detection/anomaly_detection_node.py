@@ -195,6 +195,10 @@ class AnomalyDetectionNode(Node):
         self.trigger_input_topic = self.config.get("trigger_input_topic", "/trigger_messages")
         self.raw_input_topic = self.config.get("raw_input_topic", "/ai_anomaly_logging")
         self.alert_topic = self.config.get("alert_topic", "/aad/alerts")
+        self.formatted_message_topic = self.config.get(
+            "formatted_message_topic",
+            "/aad/formatted_messages",
+        )
 
         ## Install deps for chosen triggers & start them
         self._triggers = self.config.get("trigger_scripts") if self.config.get("trigger_scripts") != None else []
@@ -242,6 +246,11 @@ class AnomalyDetectionNode(Node):
 
         # Publisher for alerts
         self.alert_pub = self.create_publisher(ROSString, self.alert_topic, 10)
+        self.formatted_message_pub = self.create_publisher(
+            ROSString,
+            self.formatted_message_topic,
+            10,
+        )
         # Added for the config tests
         self.decision_pub = self.create_publisher(ROSString, "/aad/decisions", 10)
         self.llm_called_pub = self.create_publisher(Bool, "/aad/llm_called", 10)
@@ -296,6 +305,7 @@ class AnomalyDetectionNode(Node):
             "AAD node started with config: "
             f"raw_input_topic={self.raw_input_topic}, "
             f"alert_topic={self.alert_topic}, "
+            f"formatted_message_topic={self.formatted_message_topic}, "
             f"api_frequency_seconds={self.api_frequency_seconds}, "
             f"cache_max_items={self.cache_max_items}, "
             f"duplicate_message_min_period_sec={self.duplicate_message_min_period_sec}, "
@@ -364,6 +374,9 @@ class AnomalyDetectionNode(Node):
 
         try:
             formatted = self._format_for_llm(msg)
+            formatted_msg = ROSString()
+            formatted_msg.data = formatted
+            self.formatted_message_pub.publish(formatted_msg)
             with self._queue_lock:
                 self.queue.append(formatted)
                 queue_size = len(self.queue)

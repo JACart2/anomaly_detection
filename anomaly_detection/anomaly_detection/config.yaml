@@ -38,6 +38,7 @@ trigger_input_topic: "/trigger_messages"
 ## Input topic for AAD system/output topic for anomalous alerts.
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
+formatted_message_topic: "/aad/formatted_messages"
 
 ## Duplicate blocking for anomaly messages.
 duplicate_message_min_period_sec: 2.0

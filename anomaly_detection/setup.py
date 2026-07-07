@@ -8,7 +8,7 @@ setup(
     name=package_name,
     version='0.0.1',
     packages=['anomaly_detection'],
-    package_data={'anomaly_detection': ['config.yaml']},
+    package_data={'anomaly_detection': ['config.yaml', 'aad_dashboard.html']},
     install_requires=['setuptools', 'anomaly_msg'],
     zip_safe=True,
     maintainer='Your Name',
