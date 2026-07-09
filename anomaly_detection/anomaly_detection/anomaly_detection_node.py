@@ -21,6 +21,8 @@ import subprocess
 import threading
 import time
 
+from datetime import datetime, timezone
+
 from std_msgs.msg import String as ROSString
 from std_msgs.msg import Bool
 
@@ -845,6 +847,7 @@ class AnomalyDetectionNode(Node):
 
             payload = {
                 "artifact_id": artifact_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "timestamp_ns": self.get_clock().now().nanoseconds,
                 "cached_data": cached_data,
                 "api_response": api_response,
