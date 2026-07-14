@@ -29,6 +29,7 @@ from collections import deque
 
 import rclpy
 import yaml
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from anomaly_msg.msg import AnomalyMsg
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -630,17 +631,21 @@ class AnomalyDetectionNode(Node):
 
         Resolution order:
           1) AAD_CONFIG_PATH environment variable
-          2) config.yaml in the same folder as this script
+          2) config.yaml installed in this package's share directory
+          3) config.yaml in the same folder as this script
 
         Returns
         -------
             dict: Configuration dictionary. Empty if loading fails.
         """
-        env_path = os.getenv("AAD_CONFIG_PATH")
-        if env_path and os.path.isfile(env_path):
-            config_path = env_path
-        else:
-            config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        config_path = os.getenv("AAD_CONFIG_PATH")
+        if not config_path or not os.path.isfile(config_path):
+            try:
+                config_path = os.path.join(
+                    get_package_share_directory("anomaly_detection"), "config.yaml"
+                )
+            except PackageNotFoundError:
+                config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 
         if not os.path.isfile(config_path):
             self.get_logger().warn(
