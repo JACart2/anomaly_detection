@@ -11,6 +11,7 @@ import yaml
 from io import BytesIO
 from PIL import Image
 import base64
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from dotenv import load_dotenv
 from ollama import Client
 
@@ -70,11 +71,21 @@ class LLMClient:
         self.api_base = None
         self.system_prompt = None
 
-        # Match the same config resolution style as anomaly_detection_node.py
+        # Match the same config resolution order as anomaly_detection_node.py:
+        # explicit arg/AAD_CONFIG_PATH > installed package share dir > script-relative fallback
         if config_path is None:
-            config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
-        elif not os.path.isabs(config_path):
+            config_path = os.getenv("AAD_CONFIG_PATH")
+
+        if config_path and not os.path.isabs(config_path):
             config_path = os.path.abspath(config_path)
+
+        if not config_path or not os.path.isfile(config_path):
+            try:
+                config_path = os.path.join(
+                    get_package_share_directory("anomaly_detection"), "config.yaml"
+                )
+            except PackageNotFoundError:
+                config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 
         if os.path.isfile(config_path):
             try:
