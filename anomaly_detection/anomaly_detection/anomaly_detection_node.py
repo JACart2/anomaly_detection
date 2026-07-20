@@ -16,11 +16,13 @@ Version: 4/21/2026
 import importlib.util
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 import json
 import os
 import subprocess
 import threading
 import time
+from typing import Any
 
 from datetime import datetime, timezone
 
@@ -41,8 +43,176 @@ from ollama import Client
 from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 
-from anomaly_detection.llm_client import LLMClient, encode_image
+from anomaly_detection.llm_client import LLMClient
 from anomaly_detection.response_handler import parse_llm_response
+
+
+@dataclass(frozen=True)
+class CachedImage:
+    """One latest camera frame tracked by source and generation."""
+
+    source: str
+    generation: int
+    received_monotonic: float
+    captured_at: str
+    image: Any = field(compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class CachedText:
+    """One timestamped text context item with an optional trigger token."""
+
+    text: str
+    received_monotonic: float
+    trigger_generation: int | None = None
+
+
+def _discard_stale_text(
+    queue: deque,
+    now_monotonic: float,
+    max_age_seconds: float,
+) -> int:
+    """Discard expired text context from the oldest side of a deque."""
+    if max_age_seconds <= 0.0:
+        return 0
+
+    removed = 0
+    while queue:
+        oldest = queue[0]
+        if (now_monotonic - oldest.received_monotonic) <= max_age_seconds:
+            break
+        queue.popleft()
+        removed += 1
+    return removed
+
+
+def _pending_trigger_generation(
+    items: list[CachedText],
+    processed_generation: int,
+) -> int | None:
+    """Return the newest unprocessed actionable generation in a snapshot."""
+    pending = [
+        item.trigger_generation
+        for item in items
+        if item.trigger_generation is not None
+        and item.trigger_generation > processed_generation
+    ]
+    return max(pending, default=None)
+
+
+def _snapshot_fresh_images(
+    cache_by_source: dict[str, CachedImage],
+    now_monotonic: float,
+    max_age_seconds: float,
+) -> list[CachedImage]:
+    """Return fresh camera frames in deterministic arrival order."""
+    fresh = [
+        cached
+        for cached in cache_by_source.values()
+        if max_age_seconds <= 0.0
+        or (now_monotonic - cached.received_monotonic) <= max_age_seconds
+    ]
+    return sorted(fresh, key=lambda cached: cached.generation)
+
+
+def _consume_image_snapshot(
+    cache_by_source: dict[str, CachedImage],
+    snapshot: list[CachedImage],
+) -> None:
+    """Consume snapshot frames without deleting newer replacements."""
+    for cached in snapshot:
+        current = cache_by_source.get(cached.source)
+        if current is not None and current.generation == cached.generation:
+            del cache_by_source[cached.source]
+
+
+def _parse_trigger_importance(value: Any) -> int:
+    """Convert a configured LLM trigger threshold to an importance value."""
+    if isinstance(value, str):
+        named_values = {
+            "info": AnomalyMsg.INFO,
+            "warning": AnomalyMsg.WARNING,
+            "error": AnomalyMsg.ERROR,
+        }
+        normalized = value.strip().lower()
+        if normalized in named_values:
+            return named_values[normalized]
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return AnomalyMsg.WARNING
+
+    if parsed < AnomalyMsg.INFO or parsed > AnomalyMsg.ERROR:
+        return AnomalyMsg.WARNING
+    return parsed
+
+
+def _build_artifact_payload(
+    artifact_id: str,
+    created_at: str,
+    timestamp_ns: int,
+    cached_data: list[str],
+    image_metadata: list[dict[str, Any]],
+    api_response: str,
+) -> dict[str, Any]:
+    """Build a JSON-safe artifact without embedding image bytes."""
+    return {
+        "artifact_id": artifact_id,
+        "created_at": created_at,
+        "timestamp_ns": timestamp_ns,
+        "cached_data": list(cached_data),
+        "images": list(image_metadata),
+        "api_response": api_response,
+    }
+
+
+def _prune_api_artifacts(
+    output_dir: str,
+    max_files: int,
+    keep_path: str,
+) -> list[str]:
+    """Remove oldest generated artifacts while preserving unrelated files."""
+    if max_files <= 0:
+        return []
+
+    keep_path = os.path.abspath(keep_path)
+    candidates: list[tuple[int, str, str]] = []
+    try:
+        entries = list(os.scandir(output_dir))
+    except OSError:
+        return []
+
+    for entry in entries:
+        if (
+            not entry.is_file(follow_symlinks=False)
+            or not entry.name.startswith("api_artifact_")
+            or not entry.name.endswith(".json")
+        ):
+            continue
+        try:
+            modified_ns = entry.stat(follow_symlinks=False).st_mtime_ns
+        except OSError:
+            continue
+        candidates.append((modified_ns, entry.name, os.path.abspath(entry.path)))
+
+    newest_first = sorted(candidates, reverse=True)
+    retained = {keep_path}
+    for _, _, path in newest_first:
+        if len(retained) >= max_files:
+            break
+        retained.add(path)
+
+    removed: list[str] = []
+    for _, _, path in newest_first:
+        if path in retained:
+            continue
+        try:
+            os.unlink(path)
+            removed.append(path)
+        except OSError:
+            continue
+    return removed
 
 
 class AnomalyDetectionNode(Node):
@@ -53,7 +223,12 @@ class AnomalyDetectionNode(Node):
 
         # Load config once on startup
         self.config = self._load_config()
-        self.llm_local = bool(self.config.get("llm", {}).get("local", False))
+        llm_config = self.config.get("llm", {})
+        self.llm_local = bool(llm_config.get("local", False))
+        self.vision_enabled = bool(llm_config.get("vision_enabled", False))
+        self.warm_local_model_on_startup = bool(
+            llm_config.get("warm_on_startup", False)
+        )
         self._ollama_proc = None
 
         ## import sub type profiles
@@ -88,19 +263,38 @@ class AnomalyDetectionNode(Node):
 
         # Cache sizing
         self.cache_max_items = int(self.config.get("cache_max_items", 100))
+        self.cache_max_age_seconds = max(
+            0.0,
+            float(self.config.get("cache_max_age_seconds", 30.0)),
+        )
         self.queue = deque(maxlen=self.cache_max_items)
         self._queue_lock = threading.Lock()
         self._llm_state_lock = threading.Lock()
         self._llm_worker_running = False
         self._llm_rerun_requested = False
         self._llm_worker_shutdown = False
+        self.llm_min_trigger_importance = _parse_trigger_importance(
+            self.config.get("llm_min_trigger_importance", "warning")
+        )
+        self._inference_trigger_generation = 0
+        self._processed_inference_trigger_generation = 0
         self._llm_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="aad-llm",
         )
 
-        # Keep only the most recent camera frames so image traffic cannot grow the cache.
-        self.image_queue = deque(maxlen=2)
+        # Keep one recent frame per camera source. Frames are consumed after one
+        # inference pass so the periodic timer cannot resend them indefinitely.
+        self.image_max_sources = max(
+            1,
+            int(llm_config.get("image_max_sources", 2)),
+        )
+        self.image_max_age_seconds = max(
+            0.0,
+            float(llm_config.get("image_max_age_seconds", 10.0)),
+        )
+        self.image_queue: dict[str, CachedImage] = {}
+        self._image_generation = 0
         self._image_queue_lock = threading.Lock()
         self._cv_bridge = CvBridge()
         self._error_capture_lock = threading.Lock()
@@ -140,6 +334,10 @@ class AnomalyDetectionNode(Node):
             "api_artifact_output_dir",
             "/root/dev_ws/src/anomaly_detection/logs",
         )
+        self.api_artifact_max_files = max(
+            0,
+            int(self.config.get("api_artifact_max_files", 250)),
+        )
 
         # BEST_EFFORT subscribers accept both BEST_EFFORT and RELIABLE publishers.
         self.create_subscription(
@@ -168,10 +366,15 @@ class AnomalyDetectionNode(Node):
             else:
                 self._start_local_ollama()
                 self._wait_for_ollama_ready()
-            self._warm_local_model()
+            if self.warm_local_model_on_startup:
+                self._warm_local_model()
+            else:
+                self.get_logger().info(
+                    "Local model will load lazily on the first actionable event."
+                )
 
         # Create one reusable client
-        self.llm = LLMClient()
+        self.llm = LLMClient(config_path=self.config_path)
 
         self.get_logger().info(
             "AAD node started with config: "
@@ -180,9 +383,17 @@ class AnomalyDetectionNode(Node):
             f"formatted_message_topic={self.formatted_message_topic}, "
             f"api_frequency_seconds={self.api_frequency_seconds}, "
             f"cache_max_items={self.cache_max_items}, "
+            f"cache_max_age_seconds={self.cache_max_age_seconds}, "
             f"duplicate_message_min_period_sec={self.duplicate_message_min_period_sec}, "
             f"publisher_message_min_period_by_importance={self.publisher_message_min_period_by_importance}, "
             f"error_capture_window_sec={self.error_capture_window_sec}, "
+            f"llm_min_trigger_importance="
+            f"{self._importance_to_str(self.llm_min_trigger_importance)}, "
+            f"warm_local_model_on_startup={self.warm_local_model_on_startup}, "
+            f"vision_enabled={self.vision_enabled}, "
+            f"image_max_sources={self.image_max_sources}, "
+            f"image_max_age_seconds={self.image_max_age_seconds}, "
+            f"api_artifact_max_files={self.api_artifact_max_files}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
         )
         self.get_logger().info(
@@ -205,13 +416,32 @@ class AnomalyDetectionNode(Node):
             )
 
         if msg.type == AnomalyMsg.IMAGE:
+            if not self.vision_enabled:
+                return
             try:
                 cv_image = self._cv_bridge.imgmsg_to_cv2(msg.image, desired_encoding="rgb8")
+                received_monotonic = time.monotonic()
+                source = self._camera_source(msg)
+                captured_at = self._message_timestamp(msg)
                 with self._image_queue_lock:
-                    self.image_queue.append(cv_image)
+                    self._image_generation += 1
+                    self.image_queue[source] = CachedImage(
+                        source=source,
+                        generation=self._image_generation,
+                        received_monotonic=received_monotonic,
+                        captured_at=captured_at,
+                        image=cv_image,
+                    )
+                    while len(self.image_queue) > self.image_max_sources:
+                        oldest_source = min(
+                            self.image_queue,
+                            key=lambda key: self.image_queue[key].generation,
+                        )
+                        del self.image_queue[oldest_source]
                     image_count = len(self.image_queue)
-                self.get_logger().info(
-                    f"[AAD] Cached camera frame; image_count={image_count}"
+                self.get_logger().debug(
+                    f"[AAD] Cached camera frame; source={source}, "
+                    f"image_count={image_count}"
                 )
             except Exception as e:
                 self.get_logger().warn(f"[AAD] Failed to convert camera frame: {e}")
@@ -225,7 +455,7 @@ class AnomalyDetectionNode(Node):
             and last_message_sent_time is not None
             and (now - last_message_sent_time) < self.duplicate_message_min_period_sec
         ):
-            self.get_logger().info(
+            self.get_logger().debug(
                 "[AAD] Delaying duplicate message to LLM; "
                 f"last sent {now - last_message_sent_time:.2f}s ago."
             )
@@ -243,7 +473,7 @@ class AnomalyDetectionNode(Node):
             and (now - last_publisher_message_sent_time) < publisher_min_period_sec
         ):
             publisher_name, importance_name = publisher_key
-            self.get_logger().info(
+            self.get_logger().debug(
                 "[AAD] Limiting message from publisher; "
                 f"publisher={publisher_name}, importance={importance_name}, "
                 f"last accepted {now - last_publisher_message_sent_time:.2f}s ago."
@@ -255,9 +485,21 @@ class AnomalyDetectionNode(Node):
             formatted = self._format_for_llm(msg)
             self._publish_text(self.formatted_message_pub, formatted)
             with self._queue_lock:
-                self.queue.append(formatted)
+                trigger_generation = None
+                if importance >= self.llm_min_trigger_importance:
+                    self._inference_trigger_generation += 1
+                    trigger_generation = self._inference_trigger_generation
+                self.queue.append(
+                    CachedText(
+                        text=formatted,
+                        received_monotonic=now,
+                        trigger_generation=trigger_generation,
+                    )
+                )
                 queue_size = len(self.queue)
-            self.get_logger().info(f"[AAD] Queued message for LLM; queue_size={queue_size}")
+            self.get_logger().debug(
+                f"[AAD] Queued message for LLM; queue_size={queue_size}"
+            )
             self._last_message_sent_times[message_signature] = now
             self._prune_history(
                 self._last_message_sent_times,
@@ -283,15 +525,38 @@ class AnomalyDetectionNode(Node):
 
     def llm_callback(self) -> None:
         """Schedule queued messages for LLM processing without blocking ROS."""
-        with self._queue_lock:
-            has_text_context = bool(self.queue)
-        with self._image_queue_lock:
-            has_image_context = bool(self.image_queue)
+        with self._error_capture_lock:
+            capture_active = self._error_capture_timer is not None
+        if capture_active:
+            self.get_logger().debug(
+                "[AAD] Deferring LLM work until the error context window closes."
+            )
+            return
 
-        if not has_text_context and not has_image_context:
-            self.get_logger().info(
-                "[AAD] LLM callback fired with no queued text or camera context; "
-                "skipping call."
+        with self._queue_lock:
+            _discard_stale_text(
+                self.queue,
+                time.monotonic(),
+                self.cache_max_age_seconds,
+            )
+            has_text_context = bool(self.queue)
+            pending_generation = _pending_trigger_generation(
+                list(self.queue),
+                self._processed_inference_trigger_generation,
+            )
+            has_pending_trigger = pending_generation is not None
+
+        if not has_text_context:
+            self.get_logger().debug(
+                "[AAD] LLM callback fired with no queued text; skipping call. "
+                "Camera frames never trigger inference by themselves."
+            )
+            return
+
+        if not has_pending_trigger:
+            self.get_logger().debug(
+                "[AAD] Retaining INFO messages as context; no warning, error, "
+                "or explicit trigger requires an LLM call."
             )
             return
 
@@ -322,8 +587,22 @@ class AnomalyDetectionNode(Node):
             except Exception as e:
                 self.get_logger().error(f"[AAD] Unexpected LLM worker failure: {e}")
 
+            with self._queue_lock:
+                _discard_stale_text(
+                    self.queue,
+                    time.monotonic(),
+                    self.cache_max_age_seconds,
+                )
+                pending_trigger = _pending_trigger_generation(
+                    list(self.queue),
+                    self._processed_inference_trigger_generation,
+                )
+
             with self._llm_state_lock:
-                if self._llm_rerun_requested and not self._llm_worker_shutdown:
+                if (
+                    (self._llm_rerun_requested or pending_trigger is not None)
+                    and not self._llm_worker_shutdown
+                ):
                     self._llm_rerun_requested = False
                     continue
                 self._llm_worker_running = False
@@ -343,31 +622,104 @@ class AnomalyDetectionNode(Node):
         - remove the snapshot from cache
         """
         with self._queue_lock:
-            raw_list = list(self.queue)
-        with self._image_queue_lock:
-            raw_image_list = list(self.image_queue)
+            _discard_stale_text(
+                self.queue,
+                time.monotonic(),
+                self.cache_max_age_seconds,
+            )
+            text_snapshot = list(self.queue)
+            trigger_generation = _pending_trigger_generation(
+                text_snapshot,
+                self._processed_inference_trigger_generation,
+            )
+            if text_snapshot and trigger_generation is not None:
+                # Claim only the generation in this snapshot. A newer warning,
+                # error, or trigger arriving during inference remains pending.
+                self._processed_inference_trigger_generation = trigger_generation
 
-        if not raw_list and not raw_image_list:
-            self.get_logger().info(
-                "[AAD] LLM callback fired with no queued text or camera context; "
-                "skipping call."
+        if not text_snapshot or trigger_generation is None:
+            self.get_logger().debug(
+                "[AAD] LLM worker found no pending actionable text; skipping call."
             )
             return
 
+        raw_list = [cached.text for cached in text_snapshot]
+
+        image_snapshot: list[CachedImage] = []
+        if self.vision_enabled:
+            with self._image_queue_lock:
+                image_snapshot = _snapshot_fresh_images(
+                    self.image_queue,
+                    time.monotonic(),
+                    self.image_max_age_seconds,
+                )
+
         self.get_logger().info(
             f"[AAD] LLM callback processing {len(raw_list)} text messages and "
-            f"{len(raw_image_list)} camera frames."
+            f"{len(image_snapshot)} fresh camera frames."
         )
 
+        backend_succeeded = False
+        used_image_snapshot: list[CachedImage] = []
         try:
             full_payload = "\n".join(raw_list)
             if not full_payload:
-                full_payload = "Analyze the attached camera frames for anomalies."
+                full_payload = "Analyze the queued system event for anomalies."
+
+            prepared_images = []
+            image_metadata: list[dict[str, Any]] = []
+            if image_snapshot:
+                for cached in image_snapshot:
+                    try:
+                        prepared = self.llm.prepare_images([cached.image])[0]
+                    except Exception as e:
+                        self.get_logger().warn(
+                            f"[AAD] Camera frame preparation failed; skipping "
+                            f"source={cached.source}. See: {e}"
+                        )
+                        continue
+
+                    prepared_images.append(prepared)
+                    used_image_snapshot.append(cached)
+                    image_metadata.append(
+                        {
+                            "source": cached.source,
+                            "captured_at": cached.captured_at,
+                            "generation": cached.generation,
+                            "original_width": prepared.original_width,
+                            "original_height": prepared.original_height,
+                            "width": prepared.width,
+                            "height": prepared.height,
+                            "mime_type": prepared.mime_type,
+                            "encoded_bytes": prepared.byte_size,
+                            "sha256": prepared.sha256,
+                        }
+                    )
+
+                if used_image_snapshot:
+                    full_payload += (
+                        "\nAttached camera frames, in order:\n"
+                        + "\n".join(
+                            f"Image {index}: source={cached.source} "
+                            f"captured_at={cached.captured_at}"
+                            for index, cached in enumerate(
+                                used_image_snapshot,
+                                start=1,
+                            )
+                        )
+                    )
+                elif image_snapshot:
+                    self.get_logger().warn(
+                        "[AAD] No camera frames could be prepared; continuing "
+                        "with text context only."
+                    )
+
             response = ""
             try:
                 self.llm_called_pub.publish(Bool(data=True))
                 chat = self.llm.local_chat if self.llm_local else self.llm.chat
-                response = chat(full_payload, images=raw_image_list)
+                response = chat(full_payload, images=prepared_images)
+                backend_succeeded = True
 
             except Exception as e:
                 self.get_logger().warn(
@@ -382,8 +734,12 @@ class AnomalyDetectionNode(Node):
 
             # Create artifact even if API failed
             artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
-            artifact_data = raw_list + [encode_image(image) for image in raw_image_list]
-            self._write_api_artifact(artifact_id, artifact_data, response)
+            self._write_api_artifact(
+                artifact_id,
+                raw_list,
+                response,
+                image_metadata=image_metadata,
+            )
 
             # Try parsing decision if possible
             try:
@@ -396,11 +752,22 @@ class AnomalyDetectionNode(Node):
                     f"[AAD] Could not parse decision during testing: {e}"
                 )
         finally:
-            self._remove_queue_snapshot(self.queue, self._queue_lock, raw_list)
-            # Keep the latest camera frames available for the next artifact. Camera
-            # messages arrive less frequently than text messages and may stop
-            # temporarily, so consuming the image snapshot here produces artifacts
-            # with no visual context even though a valid latest frame exists.
+            if backend_succeeded:
+                self._remove_queue_snapshot(
+                    self.queue,
+                    self._queue_lock,
+                    text_snapshot,
+                )
+                with self._image_queue_lock:
+                    _consume_image_snapshot(
+                        self.image_queue,
+                        used_image_snapshot,
+                    )
+            else:
+                self.get_logger().warn(
+                    "[AAD] Preserving queued event context after backend failure; "
+                    "a newer actionable event can retry it."
+                )
 
     def _shutdown_llm_worker(self) -> None:
         """Stop accepting LLM work and wait for the active API call to finish."""
@@ -420,7 +787,14 @@ class AnomalyDetectionNode(Node):
         """
         self._msg_count += 1
         with self._queue_lock:
-            self.queue.append(msg.data)
+            self._inference_trigger_generation += 1
+            self.queue.append(
+                CachedText(
+                    text=msg.data,
+                    received_monotonic=time.monotonic(),
+                    trigger_generation=self._inference_trigger_generation,
+                )
+            )
         self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
         if self._is_high_severity_trigger(msg.data):
             self._publish_immediate_stop(msg.data)
@@ -468,6 +842,27 @@ class AnomalyDetectionNode(Node):
                 if not self._queue_items_match(queue[0], item):
                     return
                 queue.popleft()
+
+    @staticmethod
+    def _camera_source(msg: AnomalyMsg) -> str:
+        """Return a stable source label for a camera message."""
+        try:
+            frame_id = str(msg.header.frame_id or "").strip()
+        except Exception:
+            frame_id = ""
+        if frame_id:
+            return frame_id
+
+        node_name = str(getattr(msg, "node_name", "") or "").strip()
+        return node_name or "unknown_camera"
+
+    @staticmethod
+    def _message_timestamp(msg: AnomalyMsg) -> str:
+        """Format the ROS timestamp without depending on wall-clock time."""
+        try:
+            return f"{msg.header.stamp.sec}.{msg.header.stamp.nanosec:09d}"
+        except Exception:
+            return "unknown"
 
     def _message_signature(self, msg: AnomalyMsg) -> tuple:
         """
@@ -702,15 +1097,25 @@ class AnomalyDetectionNode(Node):
         """
         Call the local model to "warm" it up and load into mem.W
         """
-        model_name = self.config.get("llm", {}).get("model", "mistral-small")
-        client = Client(host="http://localhost:11434")
+        llm_config = self.config.get("llm", {})
+        model_name = llm_config.get("model", "mistral-small")
+        timeout_seconds = max(
+            1.0,
+            float(llm_config.get("timeout_seconds", 30.0)),
+        )
+        keep_alive = str(llm_config.get("keep_alive", "2m"))
+        client = Client(
+            host="http://localhost:11434",
+            timeout=timeout_seconds,
+        )
 
         self.get_logger().info(f"Warming Ollama model: {model_name}")
         client.chat(
             model=model_name,
             messages=[{"role": "user", "content": "ping"}],
             stream=False,
-            keep_alive="15m",
+            think=False,
+            keep_alive=keep_alive,
             options={"temperature": 0, "num_predict": 1},
         )
 
@@ -727,7 +1132,13 @@ class AnomalyDetectionNode(Node):
                 self._ollama_proc.kill()
                 self._ollama_proc.wait(timeout=5)
 
-    def _write_api_artifact(self, artifact_id: str, cached_data: list[str], api_response: str) -> str | None:
+    def _write_api_artifact(
+        self,
+        artifact_id: str,
+        cached_data: list[str],
+        api_response: str,
+        image_metadata: list[dict[str, Any]] | None = None,
+    ) -> str | None:
         """
         Write a JSON artifact containing the cached LLM input and the API response.
         
@@ -752,19 +1163,28 @@ class AnomalyDetectionNode(Node):
                 f"{artifact_id}.json",
             )
 
-            payload = {
-                "artifact_id": artifact_id,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "timestamp_ns": self.get_clock().now().nanoseconds,
-                "cached_data": cached_data,
-                "api_response": api_response,
-            }
+            payload = _build_artifact_payload(
+                artifact_id=artifact_id,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                timestamp_ns=self.get_clock().now().nanoseconds,
+                cached_data=cached_data,
+                image_metadata=image_metadata or [],
+                api_response=api_response,
+            )
 
             with open(artifact_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
 
-            self.get_logger().info(f"[AAD] JSON artifact created at: {artifact_path}")
-            self.get_logger().info(json.dumps(payload, indent=2))
+            removed = _prune_api_artifacts(
+                self.api_artifact_output_dir,
+                self.api_artifact_max_files,
+                artifact_path,
+            )
+            self.get_logger().info(
+                f"[AAD] JSON artifact created at: {artifact_path}; "
+                f"text_items={len(cached_data)}, images={len(image_metadata or [])}, "
+                f"response_chars={len(api_response)}, pruned={len(removed)}"
+            )
             return artifact_path
 
         except Exception as e:
@@ -858,9 +1278,10 @@ class AnomalyDetectionNode(Node):
         """
         env_path = os.getenv("AAD_CONFIG_PATH")
         if env_path and os.path.isfile(env_path):
-            config_path = env_path
+            config_path = os.path.abspath(env_path)
         else:
             config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        self.config_path = config_path
 
         if not os.path.isfile(config_path):
             self.get_logger().warn(

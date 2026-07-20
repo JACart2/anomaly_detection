@@ -8,6 +8,10 @@ api_frequency_seconds: 20
 cache_max_items: 100
 cache_max_age_seconds: 30
 
+# Keep INFO logs as context, but avoid model work until an actionable event
+# arrives. Accepted values: info, warning, error (or the matching 0/1/2 value).
+llm_min_trigger_importance: warning
+
 # The LLM info used to select the model in llm_client.py
 # note: model_provider and model can be identical when local is set to True.
 # Args:
@@ -16,12 +20,24 @@ cache_max_age_seconds: 30
 #   local: Whether to use a local model or an API-based model.
 #   system_prompt: The system prompt passed to the llm.
 llm:
-  model_provider: "mistral"
-  model: 'mistral'
+  model_provider: "gemma4"
+  model: 'gemma4:12b-it-qat'
   local: true
+  # Avoid occupying shared GPU memory until an actionable event needs the LLM.
+  warm_on_startup: false
+  vision_enabled: true
+  image_max_sources: 2
+  image_max_age_seconds: 3.0
+  image_max_dimension: 640
+  image_jpeg_quality: 75
+  timeout_seconds: 30
+  num_ctx: 4096
+  num_predict: 128
+  think: false
+  keep_alive: "2m"
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
-    Consider node sources, severity, message content, and other relevant aspects of the provided logs AND base64 encoded images. You will also be provided camera data facing the front and driver seat of the cart.
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs. When camera frames are attached, use their source labels and timestamps as additional context.
     Objects merely visible in a camera frame, whether near or far, are normal context and must not be classified as an anomaly. Only classify an obstacle as high severity when the accompanying logs explicitly report that a stop was requested. Do not infer a stop request from an image alone.
     For MOLA localization health, do not expect a legacy fitness score. Evaluate active/inactive state, ICP quality, dropped frame ratio, stale or missing MOLA pose updates, LiDAR cloud freshness, relocalization requests, and pose-jump or unreasonable-speed/yaw-rate warnings.
     Analyze the provided log messages and respond ONLY with a JSON object.
@@ -56,7 +72,8 @@ publisher_message_min_period_sec:
 error_capture_window_sec: 2.0
 
 ## Logging frequency.
-log_every_n_msgs: 1
+log_every_n_msgs: 50
 
 ## Location for API call artifacts & how much to cache in the artifacts.
 api_artifact_output_dir: "/root/dev_ws/src/anomaly_detection/logs"
+api_artifact_max_files: 250
