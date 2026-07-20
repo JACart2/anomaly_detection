@@ -33,6 +33,7 @@ from collections import deque
 import rclpy
 import yaml
 from anomaly_msg.msg import AnomalyMsg
+from cv_bridge import CvBridge
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from ollama import Client
@@ -40,8 +41,7 @@ from ollama import Client
 from rclpy.qos import QoSProfile, HistoryPolicy, ReliabilityPolicy
 
 
-from anomaly_detection.llm_client import LLMClient
-# from anomaly_detection.llm_client import encode_image
+from anomaly_detection.llm_client import LLMClient, encode_image
 from anomaly_detection.response_handler import parse_llm_response
 
 
@@ -99,9 +99,10 @@ class AnomalyDetectionNode(Node):
             thread_name_prefix="aad-llm",
         )
 
-        # Image processing is disabled for now; IMAGE messages are ignored at intake.
-        # self.image_queue = deque(maxlen=self.cache_max_items)
-        # self._image_queue_lock = threading.Lock()
+        # Keep only the most recent camera frames so image traffic cannot grow the cache.
+        self.image_queue = deque(maxlen=2)
+        self._image_queue_lock = threading.Lock()
+        self._cv_bridge = CvBridge()
         self._error_capture_lock = threading.Lock()
         self._error_capture_timer = None
 
@@ -204,7 +205,16 @@ class AnomalyDetectionNode(Node):
             )
 
         if msg.type == AnomalyMsg.IMAGE:
-            self.get_logger().info("Ignoring IMAGE AnomalyMsg while image processing is disabled.")
+            try:
+                cv_image = self._cv_bridge.imgmsg_to_cv2(msg.image, desired_encoding="rgb8")
+                with self._image_queue_lock:
+                    self.image_queue.append(cv_image)
+                    image_count = len(self.image_queue)
+                self.get_logger().info(
+                    f"[AAD] Cached camera frame; image_count={image_count}"
+                )
+            except Exception as e:
+                self.get_logger().warn(f"[AAD] Failed to convert camera frame: {e}")
             return
 
         now = time.monotonic()
@@ -274,11 +284,14 @@ class AnomalyDetectionNode(Node):
     def llm_callback(self) -> None:
         """Schedule queued messages for LLM processing without blocking ROS."""
         with self._queue_lock:
-            has_context = bool(self.queue)
+            has_text_context = bool(self.queue)
+        with self._image_queue_lock:
+            has_image_context = bool(self.image_queue)
 
-        if not has_context:
+        if not has_text_context and not has_image_context:
             self.get_logger().info(
-                "[AAD] LLM callback fired with no queued context; skipping call."
+                "[AAD] LLM callback fired with no queued text or camera context; "
+                "skipping call."
             )
             return
 
@@ -331,22 +344,30 @@ class AnomalyDetectionNode(Node):
         """
         with self._queue_lock:
             raw_list = list(self.queue)
+        with self._image_queue_lock:
+            raw_image_list = list(self.image_queue)
 
-        if not raw_list:
-            self.get_logger().info("[AAD] LLM callback fired with no queued context; skipping call.")
+        if not raw_list and not raw_image_list:
+            self.get_logger().info(
+                "[AAD] LLM callback fired with no queued text or camera context; "
+                "skipping call."
+            )
             return
 
         self.get_logger().info(
-            f"[AAD] LLM callback processing {len(raw_list)} text messages."
+            f"[AAD] LLM callback processing {len(raw_list)} text messages and "
+            f"{len(raw_image_list)} camera frames."
         )
 
         try:
             full_payload = "\n".join(raw_list)
+            if not full_payload:
+                full_payload = "Analyze the attached camera frames for anomalies."
             response = ""
             try:
                 self.llm_called_pub.publish(Bool(data=True))
                 chat = self.llm.local_chat if self.llm_local else self.llm.chat
-                response = chat(full_payload)
+                response = chat(full_payload, images=raw_image_list)
 
             except Exception as e:
                 self.get_logger().warn(
@@ -361,7 +382,8 @@ class AnomalyDetectionNode(Node):
 
             # Create artifact even if API failed
             artifact_id = f"api_artifact_{self.get_clock().now().nanoseconds}"
-            self._write_api_artifact(artifact_id, raw_list, response)
+            artifact_data = raw_list + [encode_image(image) for image in raw_image_list]
+            self._write_api_artifact(artifact_id, artifact_data, response)
 
             # Try parsing decision if possible
             try:
@@ -375,6 +397,10 @@ class AnomalyDetectionNode(Node):
                 )
         finally:
             self._remove_queue_snapshot(self.queue, self._queue_lock, raw_list)
+            # Keep the latest camera frames available for the next artifact. Camera
+            # messages arrive less frequently than text messages and may stop
+            # temporarily, so consuming the image snapshot here produces artifacts
+            # with no visual context even though a valid latest frame exists.
 
     def _shutdown_llm_worker(self) -> None:
         """Stop accepting LLM work and wait for the active API call to finish."""
