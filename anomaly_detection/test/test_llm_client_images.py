@@ -137,4 +137,7 @@ def test_default_runtime_config_enables_gemma4_vision():
 
     assert config['llm']['vision_enabled'] is True
     assert client.model_name == 'gemma4:12b-it-qat'
+    assert 'Image observation:' in client.system_prompt
+    assert 'Log context:' in client.system_prompt
+    assert 'Do not guess' in client.system_prompt
     assert client.think is False

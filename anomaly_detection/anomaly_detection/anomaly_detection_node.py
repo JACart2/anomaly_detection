@@ -101,7 +101,7 @@ def _pending_trigger_generation(
 
 
 def _snapshot_fresh_images(
-    cache_by_source: dict[str, CachedImage],
+    cache_by_source: dict[Any, CachedImage],
     now_monotonic: float,
     max_age_seconds: float,
 ) -> list[CachedImage]:
@@ -116,14 +116,15 @@ def _snapshot_fresh_images(
 
 
 def _consume_image_snapshot(
-    cache_by_source: dict[str, CachedImage],
+    cache_by_source: dict[Any, CachedImage],
     snapshot: list[CachedImage],
 ) -> None:
     """Consume snapshot frames without deleting newer replacements."""
     for cached in snapshot:
-        current = cache_by_source.get(cached.source)
-        if current is not None and current.generation == cached.generation:
-            del cache_by_source[cached.source]
+        for key, current in list(cache_by_source.items()):
+            if current.generation == cached.generation:
+                del cache_by_source[key]
+                break
 
 
 def _parse_trigger_importance(value: Any) -> int:
@@ -283,17 +284,22 @@ class AnomalyDetectionNode(Node):
             thread_name_prefix="aad-llm",
         )
 
-        # Keep one recent frame per camera source. Frames are consumed after one
-        # inference pass so the periodic timer cannot resend them indefinitely.
-        self.image_max_sources = max(
+        # Keep a bounded rolling pre-event history. Camera frames never trigger
+        # inference; they are attached only when actionable text starts a pass.
+        self.image_max_frames = max(
             1,
-            int(llm_config.get("image_max_sources", 2)),
+            int(
+                llm_config.get(
+                    "image_max_frames",
+                    llm_config.get("image_max_sources", 2),
+                )
+            ),
         )
         self.image_max_age_seconds = max(
             0.0,
             float(llm_config.get("image_max_age_seconds", 10.0)),
         )
-        self.image_queue: dict[str, CachedImage] = {}
+        self.image_queue: dict[int, CachedImage] = {}
         self._image_generation = 0
         self._image_queue_lock = threading.Lock()
         self._cv_bridge = CvBridge()
@@ -391,7 +397,7 @@ class AnomalyDetectionNode(Node):
             f"{self._importance_to_str(self.llm_min_trigger_importance)}, "
             f"warm_local_model_on_startup={self.warm_local_model_on_startup}, "
             f"vision_enabled={self.vision_enabled}, "
-            f"image_max_sources={self.image_max_sources}, "
+            f"image_max_frames={self.image_max_frames}, "
             f"image_max_age_seconds={self.image_max_age_seconds}, "
             f"api_artifact_max_files={self.api_artifact_max_files}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
@@ -425,19 +431,16 @@ class AnomalyDetectionNode(Node):
                 captured_at = self._message_timestamp(msg)
                 with self._image_queue_lock:
                     self._image_generation += 1
-                    self.image_queue[source] = CachedImage(
+                    self.image_queue[self._image_generation] = CachedImage(
                         source=source,
                         generation=self._image_generation,
                         received_monotonic=received_monotonic,
                         captured_at=captured_at,
                         image=cv_image,
                     )
-                    while len(self.image_queue) > self.image_max_sources:
-                        oldest_source = min(
-                            self.image_queue,
-                            key=lambda key: self.image_queue[key].generation,
-                        )
-                        del self.image_queue[oldest_source]
+                    while len(self.image_queue) > self.image_max_frames:
+                        oldest_generation = min(self.image_queue)
+                        del self.image_queue[oldest_generation]
                     image_count = len(self.image_queue)
                 self.get_logger().debug(
                     f"[AAD] Cached camera frame; source={source}, "

@@ -55,6 +55,23 @@ def test_snapshot_selects_fresh_images_in_generation_order():
     assert [cached.source for cached in snapshot] == ["front", "rear"]
 
 
+def test_snapshot_can_include_multiple_pre_event_frames_from_same_camera():
+    """A trigger receives history, rather than only the latest camera frame."""
+    cache = {
+        1: _cached("front", 1, 97.0),
+        2: _cached("rear", 2, 98.0),
+        3: _cached("front", 3, 99.0),
+    }
+
+    snapshot = _snapshot_fresh_images(cache, 100.0, 6.0)
+
+    assert [(item.source, item.generation) for item in snapshot] == [
+        ("front", 1),
+        ("rear", 2),
+        ("front", 3),
+    ]
+
+
 def test_snapshot_age_limit_can_be_disabled():
     """A non-positive age limit keeps all cached frames eligible."""
     cache = {"front": _cached("front", 1, 1.0)}
@@ -274,6 +291,97 @@ def test_successful_backend_call_consumes_only_its_text_snapshot():
     assert list(node.queue) == []
     assert node._processed_inference_trigger_generation == 1
     assert len(artifacts) == 1
+
+
+def test_pre_event_images_wait_for_text_trigger_then_reach_model(monkeypatch):
+    """Image history stays passive, then accompanies an actionable event."""
+    model_calls = []
+    artifacts = []
+    logger = SimpleNamespace(
+        debug=lambda message: None,
+        info=lambda message: None,
+        warn=lambda message: None,
+        error=lambda message: None,
+    )
+    prepared = SimpleNamespace(
+        original_width=640,
+        original_height=480,
+        width=640,
+        height=480,
+        mime_type="image/jpeg",
+        byte_size=100,
+        sha256="test",
+    )
+    node = SimpleNamespace(
+        queue=deque(),
+        _queue_lock=threading.Lock(),
+        _error_capture_lock=threading.Lock(),
+        _error_capture_timer=None,
+        cache_max_age_seconds=0.0,
+        _inference_trigger_generation=0,
+        _processed_inference_trigger_generation=0,
+        vision_enabled=True,
+        _image_queue_lock=threading.Lock(),
+        image_queue={
+            1: _cached("front", 1, 97.0),
+            2: _cached("rear", 2, 98.0),
+            3: _cached("front", 3, 99.0),
+        },
+        image_max_age_seconds=6.0,
+        llm=SimpleNamespace(
+            prepare_images=lambda images: [prepared],
+            local_chat=lambda text, images=None: (
+                model_calls.append((text, images))
+                or '{"anomaly": false, "action": "none", "summary": "normal"}'
+            ),
+        ),
+        llm_local=True,
+        llm_called_pub=SimpleNamespace(publish=lambda message: None),
+        decision_pub=object(),
+        get_logger=lambda: logger,
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(nanoseconds=123)
+        ),
+        _publish_text=lambda publisher, message: None,
+        _publish_decision=lambda decision: None,
+        _write_api_artifact=lambda *args, **kwargs: artifacts.append(
+            (args, kwargs)
+        ),
+    )
+    node._queue_items_match = (
+        lambda current, expected: AnomalyDetectionNode._queue_items_match(
+            None, current, expected
+        )
+    )
+    node._remove_queue_snapshot = (
+        lambda queue, lock, snapshot: AnomalyDetectionNode._remove_queue_snapshot(
+            node, queue, lock, snapshot
+        )
+    )
+
+    # Periodic image traffic is present, but cannot call the model by itself.
+    AnomalyDetectionNode.llm_callback(node)
+    assert model_calls == []
+    assert len(node.image_queue) == 3
+
+    # A later warning is the trigger that makes the pre-event sequence useful.
+    node.queue.append(_text("warning: obstacle nearby", 100.0, trigger_generation=1))
+    node._inference_trigger_generation = 1
+    monkeypatch.setattr(
+        "anomaly_detection.anomaly_detection_node.time.monotonic",
+        lambda: 100.0,
+    )
+    AnomalyDetectionNode._process_llm_queue(node)
+
+    assert len(model_calls) == 1
+    prompt, images = model_calls[0]
+    assert prompt.startswith("warning: obstacle nearby")
+    assert [item for item in images] == [prepared, prepared, prepared]
+    assert "Image 1: source=front captured_at=stamp-1" in prompt
+    assert "Image 2: source=rear captured_at=stamp-2" in prompt
+    assert "Image 3: source=front captured_at=stamp-3" in prompt
+    assert node.image_queue == {}
+    assert artifacts[0][1]["image_metadata"][0]["source"] == "front"
 
 
 def test_trigger_importance_config_accepts_names_and_safe_defaults():
