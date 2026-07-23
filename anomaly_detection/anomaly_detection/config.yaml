@@ -1,8 +1,10 @@
 # AAD Configuration File
 # Controls artifact generation and API trigger behavior.
 
-#The amount of time between periodic API calls
-api_frequency_seconds: 20
+# Send the newest routine camera observation to the model every 10 seconds.
+# Actionable warning/error events still trigger their own processing pass and
+# reuse a fresh cached frame so the same image is not sent twice.
+api_frequency_seconds: 10
 
 #The max amount of messages stored
 cache_max_items: 100
@@ -26,9 +28,14 @@ llm:
   # Avoid occupying shared GPU memory until an actionable event needs the LLM.
   warm_on_startup: false
   vision_enabled: true
-  # Keep a short pre-event history. Images never trigger inference by themselves.
+  # Send one fresh frame on ordinary periodic context checks. Warning/error and
+  # explicit-trigger checks may use the larger rolling pre-event history below.
+  image_context_enabled: true
+  image_context_max_frames: 1
   image_max_frames: 6
-  image_max_age_seconds: 6.0
+  # Keep a frame eligible for one complete routine interval. This also lets an
+  # anomaly event reuse the routine frame when one is already available.
+  image_max_age_seconds: 10.0
   image_max_dimension: 640
   image_jpeg_quality: 75
   timeout_seconds: 30

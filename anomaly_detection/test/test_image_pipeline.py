@@ -30,11 +30,14 @@ def _cached(source, generation, received):
     )
 
 
-def _text(text, received, trigger_generation=None):
+def _text(text, received, trigger_generation=None, anomaly_candidate=None):
+    if anomaly_candidate is None:
+        anomaly_candidate = trigger_generation is not None
     return CachedText(
         text=text,
         received_monotonic=received,
         trigger_generation=trigger_generation,
+        anomaly_candidate=anomaly_candidate,
     )
 
 
@@ -102,8 +105,8 @@ def test_consuming_snapshot_preserves_newer_replacement_and_new_source():
     assert cache == {"front": new_front, "side": side}
 
 
-def test_image_only_state_does_not_schedule_inference():
-    """A camera frame cannot initiate an LLM request by itself."""
+def test_image_state_is_ignored_when_vision_is_disabled():
+    """A camera cache cannot initiate an LLM request with vision disabled."""
     class Logger:
         def __init__(self):
             self.messages = []
@@ -293,8 +296,8 @@ def test_successful_backend_call_consumes_only_its_text_snapshot():
     assert len(artifacts) == 1
 
 
-def test_pre_event_images_wait_for_text_trigger_then_reach_model(monkeypatch):
-    """Image history stays passive, then accompanies an actionable event."""
+def test_pre_event_images_reach_model_with_an_actionable_event(monkeypatch):
+    """An actionable event receives the richer pre-event image history."""
     model_calls = []
     artifacts = []
     logger = SimpleNamespace(
@@ -359,7 +362,8 @@ def test_pre_event_images_wait_for_text_trigger_then_reach_model(monkeypatch):
         )
     )
 
-    # Periodic image traffic is present, but cannot call the model by itself.
+    # This small unit fixture omits enabled vision scheduling; image history
+    # remains available for the later actionable processing pass.
     AnomalyDetectionNode.llm_callback(node)
     assert model_calls == []
     assert len(node.image_queue) == 3
@@ -382,6 +386,85 @@ def test_pre_event_images_wait_for_text_trigger_then_reach_model(monkeypatch):
     assert "Image 3: source=front captured_at=stamp-3" in prompt
     assert node.image_queue == {}
     assert artifacts[0][1]["image_metadata"][0]["source"] == "front"
+
+
+def test_periodic_context_pass_sends_only_the_configured_small_sample(monkeypatch):
+    """Routine visual context uses the newest frame instead of full history."""
+    model_calls = []
+    prepared = SimpleNamespace(
+        original_width=640,
+        original_height=480,
+        width=640,
+        height=480,
+        mime_type="image/jpeg",
+        byte_size=100,
+        sha256="test",
+    )
+    context = _text(
+        "Periodic camera context observation.",
+        100.0,
+        trigger_generation=1,
+        anomaly_candidate=False,
+    )
+    node = SimpleNamespace(
+        queue=deque([context]),
+        _queue_lock=threading.Lock(),
+        cache_max_age_seconds=0.0,
+        _processed_inference_trigger_generation=0,
+        vision_enabled=True,
+        _image_queue_lock=threading.Lock(),
+        image_queue={
+            1: _cached("front", 1, 97.0),
+            2: _cached("rear", 2, 98.0),
+            3: _cached("front", 3, 99.0),
+        },
+        image_max_age_seconds=6.0,
+        image_context_max_frames=1,
+        llm=SimpleNamespace(
+            prepare_images=lambda images: [prepared],
+            local_chat=lambda text, images=None: (
+                model_calls.append((text, images))
+                or '{"anomaly": false, "action": "none", "summary": "normal"}'
+            ),
+        ),
+        llm_local=True,
+        llm_called_pub=SimpleNamespace(publish=lambda message: None),
+        decision_pub=object(),
+        get_logger=lambda: SimpleNamespace(
+            debug=lambda message: None,
+            info=lambda message: None,
+            warn=lambda message: None,
+            error=lambda message: None,
+        ),
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(nanoseconds=123)
+        ),
+        _publish_text=lambda publisher, message: None,
+        _publish_decision=lambda decision: None,
+        _write_api_artifact=lambda *args, **kwargs: None,
+    )
+    node._queue_items_match = (
+        lambda current, expected: AnomalyDetectionNode._queue_items_match(
+            None, current, expected
+        )
+    )
+    node._remove_queue_snapshot = (
+        lambda queue, lock, snapshot: AnomalyDetectionNode._remove_queue_snapshot(
+            node, queue, lock, snapshot
+        )
+    )
+    monkeypatch.setattr(
+        "anomaly_detection.anomaly_detection_node.time.monotonic",
+        lambda: 100.0,
+    )
+
+    AnomalyDetectionNode._process_llm_queue(node)
+
+    assert len(model_calls) == 1
+    prompt, images = model_calls[0]
+    assert images == [prepared]
+    assert "Image 1: source=front captured_at=stamp-3" in prompt
+    assert sorted(node.image_queue) == [1, 2]
 
 
 def test_trigger_importance_config_accepts_names_and_safe_defaults():

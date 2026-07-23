@@ -65,6 +65,7 @@ class CachedText:
     text: str
     received_monotonic: float
     trigger_generation: int | None = None
+    anomaly_candidate: bool = False
 
 
 def _discard_stale_text(
@@ -284,8 +285,8 @@ class AnomalyDetectionNode(Node):
             thread_name_prefix="aad-llm",
         )
 
-        # Keep a bounded rolling pre-event history. Camera frames never trigger
-        # inference; they are attached only when actionable text starts a pass.
+        # Keep a bounded rolling pre-event history. The periodic timer can send
+        # a tiny visual context sample; actionable text gets richer history.
         self.image_max_frames = max(
             1,
             int(
@@ -294,6 +295,15 @@ class AnomalyDetectionNode(Node):
                     llm_config.get("image_max_sources", 2),
                 )
             ),
+        )
+        # Normal periodic observations use only a tiny sample. Actionable
+        # warning/error context may use the full rolling image history.
+        self.image_context_max_frames = max(
+            1,
+            int(llm_config.get("image_context_max_frames", 1)),
+        )
+        self.image_context_enabled = bool(
+            llm_config.get("image_context_enabled", True)
         )
         self.image_max_age_seconds = max(
             0.0,
@@ -398,6 +408,8 @@ class AnomalyDetectionNode(Node):
             f"warm_local_model_on_startup={self.warm_local_model_on_startup}, "
             f"vision_enabled={self.vision_enabled}, "
             f"image_max_frames={self.image_max_frames}, "
+            f"image_context_enabled={self.image_context_enabled}, "
+            f"image_context_max_frames={self.image_context_max_frames}, "
             f"image_max_age_seconds={self.image_max_age_seconds}, "
             f"api_artifact_max_files={self.api_artifact_max_files}, "
             f"api_artifact_output_dir={self.api_artifact_output_dir}"
@@ -497,6 +509,9 @@ class AnomalyDetectionNode(Node):
                         text=formatted,
                         received_monotonic=now,
                         trigger_generation=trigger_generation,
+                        anomaly_candidate=(
+                            importance >= self.llm_min_trigger_importance
+                        ),
                     )
                 )
                 queue_size = len(self.queue)
@@ -549,19 +564,48 @@ class AnomalyDetectionNode(Node):
             )
             has_pending_trigger = pending_generation is not None
 
-        if not has_text_context:
+        has_fresh_image = False
+        if (
+            getattr(self, "vision_enabled", False)
+            and getattr(self, "image_context_enabled", True)
+        ):
+            with self._image_queue_lock:
+                has_fresh_image = bool(
+                    _snapshot_fresh_images(
+                        self.image_queue,
+                        time.monotonic(),
+                        self.image_max_age_seconds,
+                    )
+                )
+
+        if not has_text_context and not has_fresh_image:
             self.get_logger().debug(
-                "[AAD] LLM callback fired with no queued text; skipping call. "
-                "Camera frames never trigger inference by themselves."
+                "[AAD] LLM callback fired with no queued text or fresh camera "
+                "context; skipping call."
             )
             return
 
         if not has_pending_trigger:
-            self.get_logger().debug(
-                "[AAD] Retaining INFO messages as context; no warning, error, "
-                "or explicit trigger requires an LLM call."
-            )
-            return
+            if not has_fresh_image:
+                self.get_logger().debug(
+                    "[AAD] Retaining INFO messages as context; no warning, "
+                    "error, explicit trigger, or fresh image requires a call."
+                )
+                return
+            # The periodic timer promotes a fresh camera observation to a
+            # low-cost context pass. This deliberately does not mark it as an
+            # anomaly candidate, so the image count remains tightly limited.
+            now = time.monotonic()
+            with self._queue_lock:
+                self._inference_trigger_generation += 1
+                self.queue.append(
+                    CachedText(
+                        text="Periodic camera context observation.",
+                        received_monotonic=now,
+                        trigger_generation=self._inference_trigger_generation,
+                        anomaly_candidate=False,
+                    )
+                )
 
         with self._llm_state_lock:
             if self._llm_worker_shutdown:
@@ -656,6 +700,16 @@ class AnomalyDetectionNode(Node):
                     time.monotonic(),
                     self.image_max_age_seconds,
                 )
+            anomaly_candidate = any(
+                getattr(cached, "anomaly_candidate", False)
+                for cached in text_snapshot
+            )
+            if not anomaly_candidate:
+                context_limit = max(
+                    1,
+                    int(getattr(self, "image_context_max_frames", 1)),
+                )
+                image_snapshot = image_snapshot[-context_limit:]
 
         self.get_logger().info(
             f"[AAD] LLM callback processing {len(raw_list)} text messages and "
@@ -796,6 +850,7 @@ class AnomalyDetectionNode(Node):
                     text=msg.data,
                     received_monotonic=time.monotonic(),
                     trigger_generation=self._inference_trigger_generation,
+                    anomaly_candidate=True,
                 )
             )
         self.get_logger().info(f"TRIGGER_MESSAGE_CALLBACK() received message from {self.trigger_input_topic}")
