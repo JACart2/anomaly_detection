@@ -384,7 +384,8 @@ def test_pre_event_images_reach_model_with_an_actionable_event(monkeypatch):
     assert "Image 1: source=front captured_at=stamp-1" in prompt
     assert "Image 2: source=rear captured_at=stamp-2" in prompt
     assert "Image 3: source=front captured_at=stamp-3" in prompt
-    assert node.image_queue == {}
+    # Successful inference retains the latest ZED context for the next request.
+    assert sorted(node.image_queue) == [1, 2, 3]
     assert artifacts[0][1]["image_metadata"][0]["source"] == "front"
 
 
@@ -464,7 +465,8 @@ def test_periodic_context_pass_sends_only_the_configured_small_sample(monkeypatc
     prompt, images = model_calls[0]
     assert images == [prepared]
     assert "Image 1: source=front captured_at=stamp-3" in prompt
-    assert sorted(node.image_queue) == [1, 2]
+    # Routine observations also retain their frame for subsequent requests.
+    assert sorted(node.image_queue) == [1, 2, 3]
 
 
 def test_trigger_importance_config_accepts_names_and_safe_defaults():

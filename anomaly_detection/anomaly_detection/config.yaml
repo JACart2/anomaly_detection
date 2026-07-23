@@ -28,13 +28,18 @@ llm:
   # Avoid occupying shared GPU memory until an actionable event needs the LLM.
   warm_on_startup: false
   vision_enabled: true
+  # Subscribe directly to both ZED streams. Their latest fresh frames are
+  # available to every LLM request, even before an anomaly is reported.
+  camera_topics:
+    - "/zed_front/zed_node_0/rgb/color/rect/image"
+    - "/zed_rear/zed_node_1/rgb/color/rect/image"
   # Send one fresh frame on ordinary periodic context checks. Warning/error and
   # explicit-trigger checks may use the larger rolling pre-event history below.
   image_context_enabled: true
   image_context_max_frames: 1
   image_max_frames: 6
-  # Keep a frame eligible for one complete routine interval. This also lets an
-  # anomaly event reuse the routine frame when one is already available.
+  # Keep a frame eligible for one complete routine interval. Frames remain
+  # cached after inference so every request can include visual context.
   image_max_age_seconds: 10.0
   image_max_dimension: 640
   image_jpeg_quality: 75
@@ -78,6 +83,10 @@ publisher_message_min_period_sec:
   info: 5.0
   warning: 3.0
   error: 0.0
+
+# Publish one immediate stop alert per active burst. Repeated ERROR telemetry is
+# still cached and sent to the LLM as context during this cooldown.
+immediate_alert_min_period_sec: 10.0
 
 error_capture_window_sec: 2.0
 

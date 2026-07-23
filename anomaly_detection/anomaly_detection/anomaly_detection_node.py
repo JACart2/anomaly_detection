@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 
 from std_msgs.msg import String as ROSString
 from std_msgs.msg import Bool
+from sensor_msgs.msg import Image as ROSImage
 
 import sys
 from collections import deque
@@ -313,6 +314,21 @@ class AnomalyDetectionNode(Node):
         self._image_generation = 0
         self._image_queue_lock = threading.Lock()
         self._cv_bridge = CvBridge()
+        configured_camera_topics = llm_config.get(
+            "camera_topics",
+            [
+                "/zed_front/zed_node_0/rgb/color/rect/image",
+                "/zed_rear/zed_node_1/rgb/color/rect/image",
+            ],
+        )
+        if isinstance(configured_camera_topics, str):
+            configured_camera_topics = [configured_camera_topics]
+        self.camera_topics = [
+            str(topic).strip()
+            for topic in configured_camera_topics
+            if str(topic).strip()
+        ]
+        self.camera_subscriptions = []
         self._error_capture_lock = threading.Lock()
         self._error_capture_timer = None
 
@@ -328,6 +344,12 @@ class AnomalyDetectionNode(Node):
             self._load_publisher_message_min_periods()
         )
         self._last_publisher_message_sent_times = {}
+        self.immediate_alert_min_period_sec = max(
+            0.0,
+            float(self.config.get("immediate_alert_min_period_sec", 10.0)),
+        )
+        self._alert_state_lock = threading.Lock()
+        self._last_immediate_alert_time = None
 
         # Debug logging controls
         self._msg_count = 0
@@ -362,6 +384,19 @@ class AnomalyDetectionNode(Node):
             self.log_caching_callback,
             best_effort_qos
         )
+
+        if self.vision_enabled:
+            for camera_topic in self.camera_topics:
+                subscription = self.create_subscription(
+                    ROSImage,
+                    camera_topic,
+                    lambda msg, topic=camera_topic: self._camera_image_callback(
+                        msg,
+                        topic,
+                    ),
+                    best_effort_qos,
+                )
+                self.camera_subscriptions.append(subscription)
 
         self.create_subscription(
             ROSString,
@@ -402,11 +437,13 @@ class AnomalyDetectionNode(Node):
             f"cache_max_age_seconds={self.cache_max_age_seconds}, "
             f"duplicate_message_min_period_sec={self.duplicate_message_min_period_sec}, "
             f"publisher_message_min_period_by_importance={self.publisher_message_min_period_by_importance}, "
+            f"immediate_alert_min_period_sec={self.immediate_alert_min_period_sec}, "
             f"error_capture_window_sec={self.error_capture_window_sec}, "
             f"llm_min_trigger_importance="
             f"{self._importance_to_str(self.llm_min_trigger_importance)}, "
             f"warm_local_model_on_startup={self.warm_local_model_on_startup}, "
             f"vision_enabled={self.vision_enabled}, "
+            f"camera_topics={self.camera_topics}, "
             f"image_max_frames={self.image_max_frames}, "
             f"image_context_enabled={self.image_context_enabled}, "
             f"image_context_max_frames={self.image_context_max_frames}, "
@@ -417,6 +454,49 @@ class AnomalyDetectionNode(Node):
         self.get_logger().info(
             f"[AAD] Periodic LLM timer armed for every {self.api_frequency_seconds:.2f}s."
         )
+
+    def _cache_camera_image(
+        self,
+        image_msg: ROSImage,
+        source: str,
+        captured_at: str,
+    ) -> None:
+        """Convert and retain a recent camera frame for multimodal requests."""
+        cv_image = self._cv_bridge.imgmsg_to_cv2(
+            image_msg,
+            desired_encoding="rgb8",
+        )
+        with self._image_queue_lock:
+            self._image_generation += 1
+            self.image_queue[self._image_generation] = CachedImage(
+                source=source,
+                generation=self._image_generation,
+                received_monotonic=time.monotonic(),
+                captured_at=captured_at,
+                image=cv_image,
+            )
+            while len(self.image_queue) > self.image_max_frames:
+                oldest_generation = min(self.image_queue)
+                del self.image_queue[oldest_generation]
+
+    def _camera_image_callback(
+        self,
+        msg: ROSImage,
+        camera_topic: str,
+    ) -> None:
+        """Cache frames received directly from a configured ZED topic."""
+        try:
+            stamp = msg.header.stamp
+            captured_at = (
+                f"{int(stamp.sec)}.{int(stamp.nanosec):09d}"
+                if int(stamp.sec) or int(stamp.nanosec)
+                else datetime.now(timezone.utc).isoformat()
+            )
+            self._cache_camera_image(msg, camera_topic, captured_at)
+        except Exception as e:
+            self.get_logger().warn(
+                f"[AAD] Failed to cache ZED frame from {camera_topic}: {e}"
+            )
 
     def log_caching_callback(self, msg: AnomalyMsg) -> None:
         """
@@ -437,22 +517,10 @@ class AnomalyDetectionNode(Node):
             if not self.vision_enabled:
                 return
             try:
-                cv_image = self._cv_bridge.imgmsg_to_cv2(msg.image, desired_encoding="rgb8")
-                received_monotonic = time.monotonic()
                 source = self._camera_source(msg)
                 captured_at = self._message_timestamp(msg)
+                self._cache_camera_image(msg.image, source, captured_at)
                 with self._image_queue_lock:
-                    self._image_generation += 1
-                    self.image_queue[self._image_generation] = CachedImage(
-                        source=source,
-                        generation=self._image_generation,
-                        received_monotonic=received_monotonic,
-                        captured_at=captured_at,
-                        image=cv_image,
-                    )
-                    while len(self.image_queue) > self.image_max_frames:
-                        oldest_generation = min(self.image_queue)
-                        del self.image_queue[oldest_generation]
                     image_count = len(self.image_queue)
                 self.get_logger().debug(
                     f"[AAD] Cached camera frame; source={source}, "
@@ -767,9 +835,17 @@ class AnomalyDetectionNode(Node):
                     )
                 elif image_snapshot:
                     self.get_logger().warn(
-                        "[AAD] No camera frames could be prepared; continuing "
-                        "with text context only."
+                        "[AAD] No camera frames could be prepared; deferring "
+                        "the LLM request."
                     )
+
+            if self.vision_enabled and not prepared_images:
+                self.get_logger().warn(
+                    "[AAD] Deferring LLM request until a fresh ZED frame is "
+                    "available; vision-enabled requests are never sent "
+                    "without an image."
+                )
+                return
 
             response = ""
             try:
@@ -815,11 +891,6 @@ class AnomalyDetectionNode(Node):
                     self._queue_lock,
                     text_snapshot,
                 )
-                with self._image_queue_lock:
-                    _consume_image_snapshot(
-                        self.image_queue,
-                        used_image_snapshot,
-                    )
             else:
                 self.get_logger().warn(
                     "[AAD] Preserving queued event context after backend failure; "
@@ -1031,13 +1102,51 @@ class AnomalyDetectionNode(Node):
             self.decision_pub,
             f"anomaly={decision.anomaly} {details}",
         )
-        if decision.anomaly:
+        suppress_duplicate_stop = (
+            decision.anomaly
+            and decision.action == "stop_cart"
+            and self._immediate_alert_cooldown_active()
+        )
+        if decision.anomaly and not suppress_duplicate_stop:
             self._publish_text(self.alert_pub, f"[AAD ALERT] {details}")
+        elif suppress_duplicate_stop:
+            self.get_logger().info(
+                "[AAD] Suppressed duplicate LLM stop alert during the active "
+                "immediate-alert cooldown."
+            )
+
+    def _immediate_alert_cooldown_active(self, now: float | None = None) -> bool:
+        """Return whether a recent immediate stop already represents the incident."""
+        if self.immediate_alert_min_period_sec <= 0.0:
+            return False
+        if now is None:
+            now = time.monotonic()
+        with self._alert_state_lock:
+            last_alert = self._last_immediate_alert_time
+        return (
+            last_alert is not None
+            and (now - last_alert) < self.immediate_alert_min_period_sec
+        )
 
     def _publish_immediate_stop(self, summary: str) -> None:
         """
         Publish a high-severity stop decision without waiting for the LLM.
         """
+        now = time.monotonic()
+        with self._alert_state_lock:
+            last_alert = self._last_immediate_alert_time
+            if (
+                self.immediate_alert_min_period_sec > 0.0
+                and last_alert is not None
+                and (now - last_alert) < self.immediate_alert_min_period_sec
+            ):
+                self.get_logger().debug(
+                    "[AAD] Suppressed repeated immediate stop alert; event "
+                    "telemetry remains queued for LLM context."
+                )
+                return
+            self._last_immediate_alert_time = now
+
         clean_summary = " ".join(str(summary).split())
 
         self._publish_text(
