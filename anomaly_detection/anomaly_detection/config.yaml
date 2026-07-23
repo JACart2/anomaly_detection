@@ -28,8 +28,8 @@ llm:
   # Avoid occupying shared GPU memory until an actionable event needs the LLM.
   warm_on_startup: false
   vision_enabled: true
-  # Subscribe directly to both ZED streams. Their latest fresh frames are
-  # available to every LLM request, even before an anomaly is reported.
+  # When vision is explicitly enabled, subscribe directly to both ZED streams.
+  # Their latest fresh frames are available to every LLM request.
   camera_topics:
     - "/zed_front/zed_node_0/rgb/color/rect/image"
     - "/zed_rear/zed_node_1/rgb/color/rect/image"

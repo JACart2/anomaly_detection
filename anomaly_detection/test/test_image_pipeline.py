@@ -296,6 +296,24 @@ def test_successful_backend_call_consumes_only_its_text_snapshot():
     assert len(artifacts) == 1
 
 
+def test_vision_enabled_without_a_frame_falls_back_to_text():
+    """A missing camera frame must not block an actionable LLM request."""
+    model_calls = []
+
+    def successful_chat(text, images=None):
+        model_calls.append((text, images))
+        return '{"anomaly": false, "action": "none", "summary": "normal"}'
+
+    node, _, _ = _fake_processing_node(successful_chat)
+    node.vision_enabled = True
+
+    AnomalyDetectionNode._process_llm_queue(node)
+
+    assert len(model_calls) == 1
+    assert model_calls[0][1] == []
+    assert list(node.queue) == []
+
+
 def test_pre_event_images_reach_model_with_an_actionable_event(monkeypatch):
     """An actionable event receives the richer pre-event image history."""
     model_calls = []

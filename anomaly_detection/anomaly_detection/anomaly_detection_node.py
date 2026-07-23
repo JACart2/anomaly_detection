@@ -835,17 +835,15 @@ class AnomalyDetectionNode(Node):
                     )
                 elif image_snapshot:
                     self.get_logger().warn(
-                        "[AAD] No camera frames could be prepared; deferring "
-                        "the LLM request."
+                        "[AAD] No camera frames could be prepared; sending "
+                        "the LLM request with text context only."
                     )
 
             if self.vision_enabled and not prepared_images:
-                self.get_logger().warn(
-                    "[AAD] Deferring LLM request until a fresh ZED frame is "
-                    "available; vision-enabled requests are never sent "
-                    "without an image."
+                self.get_logger().info(
+                    "[AAD] No fresh camera frame is available; continuing "
+                    "with a text-only LLM request."
                 )
-                return
 
             response = ""
             try:
