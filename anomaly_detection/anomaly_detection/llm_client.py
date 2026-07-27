@@ -236,12 +236,15 @@ class LLMClient:
         self._load_performance_config(llm_cfg)
         self.model = f'{self.provider}/{self.model_name}'
         self.api_base = os.getenv(f'{self.provider.upper()}_API_BASE', None)
+        self.ollama_host = str(
+            llm_cfg.get('ollama_host', 'http://localhost:11434')
+        ).rstrip('/')
 
         ollama_options = {}
         if self.inference_timeout_seconds is not None:
             ollama_options['timeout'] = self.inference_timeout_seconds
         self.ollama_client = Client(
-            host='http://localhost:11434',
+            host=self.ollama_host,
             **ollama_options,
         )
 

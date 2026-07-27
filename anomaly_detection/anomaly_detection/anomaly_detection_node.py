@@ -228,6 +228,12 @@ class AnomalyDetectionNode(Node):
         self.config = self._load_config()
         llm_config = self.config.get("llm", {})
         self.llm_local = bool(llm_config.get("local", False))
+        self.ollama_host = str(
+            llm_config.get("ollama_host", "http://localhost:11434")
+        ).rstrip("/")
+        self.ollama_llm_library = str(
+            llm_config.get("ollama_llm_library", "")
+        ).strip()
         self.vision_enabled = bool(llm_config.get("vision_enabled", False))
         self.warm_local_model_on_startup = bool(
             llm_config.get("warm_on_startup", False)
@@ -412,7 +418,7 @@ class AnomalyDetectionNode(Node):
 
             if self._is_ollama_ready():
                 self.get_logger().info(
-                    "Detected existing Ollama server at http://localhost:11434; reusing it."
+                    f"Detected existing Ollama server at {self.ollama_host}; reusing it."
                 )
             else:
                 self._start_local_ollama()
@@ -1208,20 +1214,22 @@ class AnomalyDetectionNode(Node):
         Quick health check for an already-running Ollama server.
         """
         try:
-            Client(host="http://localhost:11434").list()
+            Client(host=self.ollama_host).list()
             return True
         except Exception:
             return False
 
     def _start_local_ollama(self) -> None:
         """
-        Runs local Ollama server as a subprocess. Runs ollama serve on localhost:11434.
+        Runs a local Ollama server as a subprocess.
         """
         if self._ollama_proc is not None and self._ollama_proc.poll() is None:
             return
 
         env = os.environ.copy()
-        env.setdefault("OLLAMA_HOST", "127.0.0.1:11434")
+        env["OLLAMA_HOST"] = self.ollama_host
+        if self.ollama_llm_library:
+            env["OLLAMA_LLM_LIBRARY"] = self.ollama_llm_library
 
         self.get_logger().info("Starting local Ollama server...")
         self._ollama_proc = subprocess.Popen(
@@ -1241,7 +1249,7 @@ class AnomalyDetectionNode(Node):
             timeout_sec (float): How long to wait until timeout
         """
         deadline = time.time() + timeout_sec
-        client = Client(host="http://localhost:11434")
+        client = Client(host=self.ollama_host)
 
         last_err = None
         while time.time() < deadline:
@@ -1270,7 +1278,7 @@ class AnomalyDetectionNode(Node):
         )
         keep_alive = str(llm_config.get("keep_alive", "2m"))
         client = Client(
-            host="http://localhost:11434",
+            host=self.ollama_host,
             timeout=timeout_seconds,
         )
 

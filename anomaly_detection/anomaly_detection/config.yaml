@@ -7,7 +7,7 @@
 api_frequency_seconds: 10
 
 #The max amount of messages stored
-cache_max_items: 100
+cache_max_items: 20
 cache_max_age_seconds: 30
 
 # Keep INFO logs as context, but avoid model work until an actionable event
@@ -25,8 +25,13 @@ llm:
   model_provider: "gemma4"
   model: 'gemma4:12b-it-qat'
   local: true
-  # Avoid occupying shared GPU memory until an actionable event needs the LLM.
-  warm_on_startup: false
+  # Use a dedicated Ollama instance because the default port is occupied by
+  # a CPU-only service. CUDA initialization is currently faulted, while the
+  # Vulkan backend provides full NVIDIA GPU offload.
+  ollama_host: "http://127.0.0.1:21434"
+  ollama_llm_library: "vulkan"
+  # Keep the model resident so anomaly requests do not pay the cold-start cost.
+  warm_on_startup: true
   vision_enabled: true
   # When vision is explicitly enabled, subscribe directly to both ZED streams.
   # Their latest fresh frames are available to every LLM request.
@@ -37,16 +42,16 @@ llm:
   # explicit-trigger checks may use the larger rolling pre-event history below.
   image_context_enabled: true
   image_context_max_frames: 1
-  image_max_frames: 6
+  image_max_frames: 2
   # Keep a frame eligible for one complete routine interval. Frames remain
   # cached after inference so every request can include visual context.
   image_max_age_seconds: 10.0
-  image_max_dimension: 640
+  image_max_dimension: 448
   image_jpeg_quality: 75
-  timeout_seconds: 30
-  num_ctx: 4096
-  # Allow enough output for a visual observation plus the supporting log context.
-  num_predict: 192
+  timeout_seconds: 35
+  num_ctx: 3072
+  # Keep the structured decision concise enough for the latency budget.
+  num_predict: 96
   think: false
   keep_alive: "2m"
   system_prompt: >-
