@@ -320,21 +320,6 @@ class AnomalyDetectionNode(Node):
         self._image_generation = 0
         self._image_queue_lock = threading.Lock()
         self._cv_bridge = CvBridge()
-        configured_camera_topics = llm_config.get(
-            "camera_topics",
-            [
-                "/zed_front/zed_node_0/rgb/color/rect/image",
-                "/zed_rear/zed_node_1/rgb/color/rect/image",
-            ],
-        )
-        if isinstance(configured_camera_topics, str):
-            configured_camera_topics = [configured_camera_topics]
-        self.camera_topics = [
-            str(topic).strip()
-            for topic in configured_camera_topics
-            if str(topic).strip()
-        ]
-        self.camera_subscriptions = []
         self._error_capture_lock = threading.Lock()
         self._error_capture_timer = None
 
@@ -391,19 +376,6 @@ class AnomalyDetectionNode(Node):
             best_effort_qos
         )
 
-        if self.vision_enabled:
-            for camera_topic in self.camera_topics:
-                subscription = self.create_subscription(
-                    ROSImage,
-                    camera_topic,
-                    lambda msg, topic=camera_topic: self._camera_image_callback(
-                        msg,
-                        topic,
-                    ),
-                    best_effort_qos,
-                )
-                self.camera_subscriptions.append(subscription)
-
         self.create_subscription(
             ROSString,
             self.trigger_input_topic,
@@ -449,7 +421,6 @@ class AnomalyDetectionNode(Node):
             f"{self._importance_to_str(self.llm_min_trigger_importance)}, "
             f"warm_local_model_on_startup={self.warm_local_model_on_startup}, "
             f"vision_enabled={self.vision_enabled}, "
-            f"camera_topics={self.camera_topics}, "
             f"image_max_frames={self.image_max_frames}, "
             f"image_context_enabled={self.image_context_enabled}, "
             f"image_context_max_frames={self.image_context_max_frames}, "
@@ -484,25 +455,6 @@ class AnomalyDetectionNode(Node):
             while len(self.image_queue) > self.image_max_frames:
                 oldest_generation = min(self.image_queue)
                 del self.image_queue[oldest_generation]
-
-    def _camera_image_callback(
-        self,
-        msg: ROSImage,
-        camera_topic: str,
-    ) -> None:
-        """Cache frames received directly from a configured ZED topic."""
-        try:
-            stamp = msg.header.stamp
-            captured_at = (
-                f"{int(stamp.sec)}.{int(stamp.nanosec):09d}"
-                if int(stamp.sec) or int(stamp.nanosec)
-                else datetime.now(timezone.utc).isoformat()
-            )
-            self._cache_camera_image(msg, camera_topic, captured_at)
-        except Exception as e:
-            self.get_logger().warn(
-                f"[AAD] Failed to cache ZED frame from {camera_topic}: {e}"
-            )
 
     def log_caching_callback(self, msg: AnomalyMsg) -> None:
         """
