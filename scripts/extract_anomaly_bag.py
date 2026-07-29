@@ -22,6 +22,8 @@ from rosidl_runtime_py.utilities import get_message
 
 IMPORTANCE_NAMES = {0: "INFO", 1: "WARNING", 2: "ERROR"}
 TYPE_NAMES = {0: "TEXT", 1: "IMAGE", 2: "DATA"}
+ANOMALY_MSG_TYPE = "anomaly_msg/msg/AnomalyMsg"
+DEFAULT_ANOMALY_TOPIC = "/ai_anomaly_logging"
 
 
 def iso_time(nanoseconds: int) -> str:
@@ -187,7 +189,7 @@ def write_html(
     (output / "index.html").write_text(document, encoding="utf-8")
 
 
-def extract(bag: Path, output: Path) -> None:
+def extract(bag: Path, output: Path, topic: str) -> None:
     if output.exists():
         shutil.rmtree(output)
     images_dir = output / "images"
@@ -201,11 +203,19 @@ def extract(bag: Path, output: Path) -> None:
         ),
     )
     topic_types = {
-        topic.name: topic.type for topic in reader.get_all_topics_and_types()
+        t.name: t.type for t in reader.get_all_topics_and_types()
     }
-    message_types = {
-        topic: get_message(type_name) for topic, type_name in topic_types.items()
-    }
+    if topic not in topic_types:
+        raise SystemExit(
+            f"Topic {topic!r} not found in bag. Available topics: "
+            f"{', '.join(sorted(topic_types)) or '(none)'}"
+        )
+    if topic_types[topic] != ANOMALY_MSG_TYPE:
+        raise SystemExit(
+            f"Topic {topic!r} is type {topic_types[topic]!r}, expected {ANOMALY_MSG_TYPE!r}"
+        )
+    message_type = get_message(topic_types[topic])
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[topic]))
     bridge = CvBridge()
     records: list[dict] = []
     importance_counts: Counter = Counter()
@@ -213,8 +223,8 @@ def extract(bag: Path, output: Path) -> None:
     image_count = 0
 
     while reader.has_next():
-        topic, serialized, recorded_ns = reader.read_next()
-        msg = deserialize_message(serialized, message_types[topic])
+        _topic, serialized, recorded_ns = reader.read_next()
+        msg = deserialize_message(serialized, message_type)
         index = len(records) + 1
         importance = int(msg.importance)
         msg_type = int(msg.type)
@@ -317,7 +327,8 @@ def extract(bag: Path, output: Path) -> None:
 
     metadata = {
         "source_bag": str(bag.resolve()),
-        "topics": topic_types,
+        "anomaly_topic": topic,
+        "bag_topics": topic_types,
         "message_count": len(records),
         "image_count": image_count,
         "importance_counts": {
@@ -353,6 +364,12 @@ def main() -> None:
         type=Path,
         help="Output directory (default: <bag-name>_report)",
     )
+    parser.add_argument(
+        "-t",
+        "--topic",
+        default=DEFAULT_ANOMALY_TOPIC,
+        help=f"AnomalyMsg topic to extract (default: {DEFAULT_ANOMALY_TOPIC})",
+    )
     args = parser.parse_args()
     bag = args.bag.resolve()
     if not bag.is_file():
@@ -360,7 +377,7 @@ def main() -> None:
     output = (args.output or Path(f"{bag.stem}_report")).resolve()
     if output == bag.parent or output == bag:
         parser.error("Output must be a dedicated directory")
-    extract(bag, output)
+    extract(bag, output, args.topic)
 
 
 if __name__ == "__main__":
