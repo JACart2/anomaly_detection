@@ -29,7 +29,6 @@ setup(
         'console_scripts': [
             'anomaly_detection_node = anomaly_detection.anomaly_detection_node:main',
             "aad_dashboard_bridge = anomaly_detection.aad_dashboard_bridge:main",
-            "camera_context_publisher = anomaly_detection.camera_context_publisher:main"
         ],
     },
 )

@@ -73,12 +73,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    camera_context_node = Node(
-        package="anomaly_detection",
-        executable="camera_context_publisher",
-        output="screen",
-    )
-
     dashboard_node = Node(
         package="anomaly_detection",
         executable="aad_dashboard_bridge",
@@ -118,7 +112,6 @@ def generate_launch_description():
         ui_node,
         # collision_node,
         anomaly_node,
-        camera_context_node,
         dashboard_node,
         bag_record
     ])

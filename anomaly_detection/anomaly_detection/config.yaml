@@ -33,15 +33,6 @@ llm:
   # Keep the model resident so anomaly requests do not pay the cold-start cost.
   warm_on_startup: true
   vision_enabled: true
-  # camera_context_publisher subscribes to these ZED streams and republishes a
-  # throttled frame from each as an AnomalyMsg(type=IMAGE) on raw_input_topic,
-  # which this node consumes like any other anomaly message. This keeps camera
-  # context on the same topic/bag as everything else instead of a second one.
-  camera_topics:
-    - "/zed_front/zed_node_0/rgb/color/rect/image"
-    - "/zed_rear/zed_node_1/rgb/color/rect/image"
-  # How often camera_context_publisher republishes the latest frame per camera.
-  camera_bridge_publish_period_sec: 10.0
   # Send one fresh frame on ordinary periodic context checks. Warning/error and
   # explicit-trigger checks may use the larger rolling pre-event history below.
   image_context_enabled: true
