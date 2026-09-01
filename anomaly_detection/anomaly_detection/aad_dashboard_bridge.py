@@ -170,7 +170,7 @@ def ros_thread_fn():
 def main():
     threading.Thread(target=ros_thread_fn, daemon=True).start()
     # Host 0.0.0.0 makes it accessible on your network
-    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, host="0.0.0.0", port=5001, allow_unsafe_werkzeug=True)
 
 
 if __name__ == "__main__":
