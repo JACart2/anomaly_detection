@@ -2,6 +2,21 @@
 
 **Status:** Completed
 
+## At a glance
+
+- All 6 planned replays completed; no replay was marked failed or invalid.
+- This is an **unlabeled** replay, so the reported detections are not measures of accuracy, precision, or recall.
+- `local_text_cache_20` had the lower mean model-response latency (19.808 s versus 22.598 s for `local_text_cache_10`), a 2.790 s (12.3%) reduction.
+- Both configurations produced positive detections in every replay. The 20-message cache was repeatable at 5 positives per replay; the 10-message cache varied slightly (6, 7, and 6 positives).
+- Review the detailed decisions before treating the detection totals as operational results: several entries used the safe fallback after a malformed response, and the 20-message cache also recorded failed LLM calls.
+
+### Reading this report
+
+- A **positive decision** is a final decision marked `Anomaly: Yes`; it is not a verified anomaly because this evaluation has no labels.
+- **Model latency** is reported only when a measured model response was available. An em dash (`—`) means no latency was recorded for that final decision.
+- `None` in an aggregate severity or action distribution means those aggregate breakdowns were not collected, not that no severity or action occurred. Per-run breakdowns remain available below.
+- The aggregate **Unparseable decisions** metric is reported by the evaluator as zero. Detailed rows can still identify malformed model output or an LLM-call failure when the evaluator produced a safe fallback decision; those rows are called out in the final-decision tables.
+
 ## Experiment summary
 
 | Item | Value |
@@ -22,7 +37,7 @@
 | --- | --- |
 | /root/dev_ws/src/anomaly_detection/system_evaluation/bags/anomaly_20260727_183711 | 308.426 s |
 
-> This was an unlabeled evaluation. Detection counts and configuration agreement are not accuracy measurements.
+> This was an unlabeled evaluation. Detection counts and configuration agreement describe replay behavior only; they are not accuracy measurements.
 
 ## Overall results
 

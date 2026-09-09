@@ -25,7 +25,9 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import re
+import secrets
 import shlex
 import signal
 import statistics
@@ -70,7 +72,7 @@ QUICK_RUN_OUTPUT_DIRECTORY = (
 
 
 NS_PER_SECOND = 1_000_000_000
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 DEFAULT_DECISION_TOPIC = '/aad/decisions'
 DEFAULT_ALERT_TOPIC = '/aad/alerts'
 DEFAULT_LLM_CALLED_TOPIC = '/aad/llm_called'
@@ -135,6 +137,7 @@ class Experiment:
     aad_config: dict[str, Any]
     config_hash: str
     trials: int
+    randomization: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -406,6 +409,178 @@ def positive_integer(name: str, value: Any) -> int:
     return parsed
 
 
+def random_seed(name: str, value: Any) -> int:
+    """Validate an optional randomization seed or generate a secure one."""
+    if value is None:
+        return secrets.randbits(63)
+    if isinstance(value, bool):
+        raise EvaluationError(f'{name} must be an integer.')
+    try:
+        seed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise EvaluationError(f'{name} must be an integer.') from exc
+    if seed != value:
+        raise EvaluationError(f'{name} must be an integer.')
+    return seed
+
+
+def randomized_llm_value(
+    name: str, specification: Any, generator: random.Random
+) -> Any:
+    """Select one LLM value from a choices list or a numeric range."""
+    if isinstance(specification, list):
+        choices = specification
+        range_specification = None
+    elif isinstance(specification, dict):
+        choices = specification.get('choices')
+        range_specification = specification.get('range')
+        unknown = set(specification).difference({'choices', 'range', 'integer'})
+        if unknown:
+            raise EvaluationError(
+                f'{name} has unsupported randomization field(s): '
+                f'{", ".join(sorted(unknown))}.'
+            )
+        if choices is not None and range_specification is not None:
+            raise EvaluationError(f'{name} cannot specify both choices and range.')
+    else:
+        raise EvaluationError(
+            f'{name} must be a choices list or a mapping with choices or range.'
+        )
+
+    if choices is not None:
+        if not isinstance(choices, list) or not choices:
+            raise EvaluationError(f'{name}.choices must be a non-empty list.')
+        return copy.deepcopy(generator.choice(choices))
+
+    if not isinstance(range_specification, list) or len(range_specification) != 2:
+        raise EvaluationError(f'{name}.range must contain [minimum, maximum].')
+    minimum, maximum = range_specification
+    if (
+        not isinstance(minimum, (int, float))
+        or isinstance(minimum, bool)
+        or not isinstance(maximum, (int, float))
+        or isinstance(maximum, bool)
+        or not math.isfinite(minimum)
+        or not math.isfinite(maximum)
+        or minimum > maximum
+    ):
+        raise EvaluationError(f'{name}.range must be finite numbers in ascending order.')
+    integer = specification.get('integer') if isinstance(specification, dict) else None
+    if integer is None:
+        integer = isinstance(minimum, int) and isinstance(maximum, int)
+    if not isinstance(integer, bool):
+        raise EvaluationError(f'{name}.integer must be boolean when provided.')
+    if integer:
+        if int(minimum) != minimum or int(maximum) != maximum:
+            raise EvaluationError(f'{name}.range must use integer endpoints.')
+        return generator.randint(int(minimum), int(maximum))
+    return generator.uniform(float(minimum), float(maximum))
+
+
+def validate_llm_configuration(
+    experiment_name: str, aad_config: dict[str, Any]
+) -> None:
+    """Check the LLM fields required by the evaluator before a replay."""
+    llm = aad_config.get('llm')
+    if not isinstance(llm, dict):
+        raise EvaluationError(
+            f'Experiment {experiment_name!r} has no valid llm mapping.'
+        )
+    if not isinstance(llm.get('model'), str) or not llm['model'].strip():
+        raise EvaluationError(
+            f'Experiment {experiment_name!r} must select llm.model.'
+        )
+    if 'local' in llm and not isinstance(llm['local'], bool):
+        raise EvaluationError(
+            f'Experiment {experiment_name!r} llm.local must be boolean.'
+        )
+    if 'vision_enabled' in llm and not isinstance(llm['vision_enabled'], bool):
+        raise EvaluationError(
+            f'Experiment {experiment_name!r} llm.vision_enabled must be boolean.'
+        )
+
+
+def randomized_experiments(
+    *,
+    name: str,
+    aad_config: dict[str, Any],
+    trials: int,
+    specification: Any,
+) -> list[Experiment]:
+    """Expand one randomized experiment into reproducible sampled variants."""
+    if not isinstance(specification, dict):
+        raise EvaluationError(f'Experiment {name!r} randomize must be a mapping.')
+    unknown = set(specification).difference({'samples', 'seed', 'llm'})
+    if unknown:
+        raise EvaluationError(
+            f'Experiment {name!r} randomize has unsupported field(s): '
+            f'{", ".join(sorted(unknown))}.'
+        )
+    samples = positive_integer(
+        f'experiments[{name}].randomize.samples', specification.get('samples', 1)
+    )
+    llm_specification = specification.get('llm')
+    if not isinstance(llm_specification, dict) or not llm_specification:
+        raise EvaluationError(
+            f'Experiment {name!r} randomize.llm must be a non-empty mapping.'
+        )
+    if not all(
+        isinstance(parameter, str) and parameter for parameter in llm_specification
+    ):
+        raise EvaluationError(
+            f'Experiment {name!r} randomize.llm parameter names must be strings.'
+        )
+
+    seed = random_seed(
+        f'experiments[{name}].randomize.seed', specification.get('seed')
+    )
+    generator = random.Random(seed)
+    resolved: list[Experiment] = []
+    hashes: set[str] = set()
+    attempts = 0
+    maximum_attempts = max(samples * 100, 100)
+    while len(resolved) < samples and attempts < maximum_attempts:
+        attempts += 1
+        sampled = {
+            parameter: randomized_llm_value(
+                f'experiments[{name}].randomize.llm.{parameter}', value, generator
+            )
+            for parameter, value in llm_specification.items()
+        }
+        candidate = copy.deepcopy(aad_config)
+        candidate_llm = candidate.get('llm')
+        assert isinstance(candidate_llm, dict)
+        candidate_llm.update(sampled)
+        validate_llm_configuration(name, candidate)
+        config_hash = stable_hash(candidate)
+        if config_hash in hashes:
+            continue
+        sample_index = len(resolved) + 1
+        resolved.append(
+            Experiment(
+                name=f'{name}__sample_{sample_index}',
+                aad_config=candidate,
+                config_hash=config_hash,
+                trials=trials,
+                randomization={
+                    'source_experiment': name,
+                    'sample_index': sample_index,
+                    'sample_count': samples,
+                    'seed': seed,
+                    'sampled_llm_parameters': sampled,
+                },
+            )
+        )
+        hashes.add(config_hash)
+    if len(resolved) != samples:
+        raise EvaluationError(
+            f'Experiment {name!r} could not generate {samples} unique randomized '
+            'LLM configurations. Add more choices, widen a range, or request fewer '
+            'samples.'
+        )
+    return resolved
+
+
 def resolve_experiments(
     document: dict[str, Any],
     config_path: Path,
@@ -417,7 +592,13 @@ def resolve_experiments(
         raise EvaluationError('Evaluation YAML must contain a non-empty experiments list.')
     base_reference = document.get('base_config')
     default_trials = document.get('runner', {}).get('trials', 1)
+    declared_names = {
+        str(raw.get('name', '')).strip()
+        for raw in raw_experiments
+        if isinstance(raw, dict)
+    }
     names: set[str] = set()
+    resolved_names: set[str] = set()
     resolved: list[Experiment] = []
 
     for index, raw in enumerate(raw_experiments, start=1):
@@ -439,24 +620,33 @@ def resolve_experiments(
         base_config = load_yaml_mapping(base_path)
         overrides = normalize_overrides(raw.get('overrides'), name)
         aad_config = deep_merge(base_config, overrides)
-        llm = aad_config.get('llm')
-        if not isinstance(llm, dict):
-            raise EvaluationError(f'Experiment {name!r} has no valid llm mapping.')
-        if not isinstance(llm.get('model'), str) or not llm['model'].strip():
-            raise EvaluationError(f'Experiment {name!r} must select llm.model.')
-        if 'local' in llm and not isinstance(llm['local'], bool):
-            raise EvaluationError(f'Experiment {name!r} llm.local must be boolean.')
-        if 'vision_enabled' in llm and not isinstance(llm['vision_enabled'], bool):
-            raise EvaluationError(
-                f'Experiment {name!r} llm.vision_enabled must be boolean.'
-            )
+        validate_llm_configuration(name, aad_config)
         trial_value = (
             trials_override
             if trials_override is not None
             else raw.get('trials', default_trials)
         )
         trials = positive_integer(f'experiments[{name}].trials', trial_value)
-        resolved.append(Experiment(name, aad_config, stable_hash(aad_config), trials))
+        randomize = raw.get('randomize')
+        if randomize is None:
+            experiments = [Experiment(name, aad_config, stable_hash(aad_config), trials)]
+        else:
+            experiments = randomized_experiments(
+                name=name,
+                aad_config=aad_config,
+                trials=trials,
+                specification=randomize,
+            )
+        for experiment in experiments:
+            if experiment.name in resolved_names or (
+                randomize is not None and experiment.name in declared_names
+            ):
+                raise EvaluationError(
+                    f'Randomized experiment name conflicts with another experiment: '
+                    f'{experiment.name!r}.'
+                )
+            resolved_names.add(experiment.name)
+            resolved.append(experiment)
     return resolved
 
 
@@ -1509,22 +1699,40 @@ def aggregate_executions(
 ) -> dict[str, Any]:
     """Aggregate performance, behavior, reliability, and optional truth metrics."""
     completed = [item for item in executions if item['status'].startswith('completed')]
+    decisions = [
+        decision
+        for item in completed
+        for decision in item.get('decisions', [])
+        if isinstance(decision, dict)
+    ]
     model_latencies = [
         decision['model_latency_seconds']
-        for item in completed
-        for decision in item.get('decisions', [])
+        for decision in decisions
         if decision.get('model_latency_seconds') is not None
     ]
-    positive = sum(
-        decision.get('anomaly') is True
-        for item in completed
-        for decision in item.get('decisions', [])
-    )
-    negative = sum(
-        decision.get('anomaly') is False
-        for item in completed
-        for decision in item.get('decisions', [])
-    )
+    positive = sum(decision.get('anomaly') is True for decision in decisions)
+    negative = sum(decision.get('anomaly') is False for decision in decisions)
+    unparseable = len(decisions) - positive - negative
+    severity_distribution = {
+        severity: sum(decision.get('severity') == severity for decision in decisions)
+        for severity in sorted(
+            {
+                decision.get('severity')
+                for decision in decisions
+                if decision.get('severity')
+            }
+        )
+    }
+    action_distribution = {
+        action: sum(decision.get('action') == action for decision in decisions)
+        for action in sorted(
+            {
+                decision.get('action')
+                for decision in decisions
+                if decision.get('action')
+            }
+        )
+    }
     calls = sum(len(item.get('llm_calls', [])) for item in completed)
     result: dict[str, Any] = {
         'executions_expected': len(executions) if expected is None else expected,
@@ -1535,8 +1743,11 @@ def aggregate_executions(
         'behavior': {
             'positive_decisions': positive,
             'negative_decisions': negative,
+            'unparseable_decisions': unparseable,
             'positive_decision_rate': safe_ratio(positive, positive + negative),
             'alerts': sum(len(item.get('alerts', [])) for item in completed),
+            'severity_distribution': severity_distribution,
+            'action_distribution': action_distribution,
         },
         'reliability': {
             'llm_calls': calls,
@@ -1832,7 +2043,7 @@ def metric_rows(metrics: Any) -> list[tuple[str, Any]]:
         rows.append(('Elapsed time', seconds_text(metrics.get('elapsed_seconds'))))
     rows.extend(
         [
-            ('Decisions measured for latency', latency.get('count', 0)),
+            ('Model responses measured for latency', latency.get('count', 0)),
             ('Mean response latency', seconds_text(latency.get('mean_seconds'))),
             ('Median response latency', seconds_text(latency.get('median_seconds'))),
             ('Minimum response latency', seconds_text(latency.get('minimum_seconds'))),
@@ -1871,6 +2082,150 @@ def append_messages(lines: list[str], heading: str, messages: Any) -> None:
         return
     lines.extend(['', f'#### {heading}', ''])
     lines.extend(f'- {message}' for message in messages)
+
+
+def completed_positive_counts(configuration: dict[str, Any]) -> list[int]:
+    """Return positive-decision counts for completed runs in report order."""
+    counts = []
+    for execution in configuration.get('executions', []):
+        if not isinstance(execution, dict) or not str(
+            execution.get('status', '')
+        ).startswith('completed'):
+            continue
+        metrics = execution.get('metrics', {})
+        behavior = metrics.get('behavior', {}) if isinstance(metrics, dict) else {}
+        count = behavior.get('positive_decisions', 0)
+        counts.append(
+            count if isinstance(count, int) and not isinstance(count, bool) else 0
+        )
+    return counts
+
+
+def detailed_llm_issue_counts(report: dict[str, Any]) -> tuple[int, int]:
+    """Count safe fallbacks and failed calls retained in final decisions."""
+    fallbacks = 0
+    failures = 0
+    for configuration in report.get('configurations', []):
+        if not isinstance(configuration, dict):
+            continue
+        for execution in configuration.get('executions', []):
+            if not isinstance(execution, dict):
+                continue
+            for decision in execution.get('final_decisions', []):
+                if not isinstance(decision, dict):
+                    continue
+                summary = str(decision.get('summary', '')).lower()
+                fallbacks += 'invalid/malformed llm response' in summary
+                failures += 'llm call failed' in summary
+    return fallbacks, failures
+
+
+def append_report_overview(lines: list[str], report: dict[str, Any]) -> None:
+    """Append a concise, data-derived explanation before the full results."""
+    experiment = report['experiment']
+    overall = report['overall']
+    completed = overall.get('executions_completed', 0)
+    expected = overall.get('executions_expected', 0)
+    failed = overall.get('executions_failed', 0)
+    invalid = overall.get('executions_invalid', 0)
+    lines.extend(['## At a glance', ''])
+    if completed == expected and not failed and not invalid:
+        lines.append(
+            f'- All {expected} planned replay(s) completed; none was marked '
+            'failed or invalid.'
+        )
+    else:
+        lines.append(
+            f'- {completed} of {expected} planned replay(s) completed; '
+            f'{failed} failed and {invalid} were invalid.'
+        )
+    if experiment.get('evaluation_mode') == 'unlabeled':
+        lines.append(
+            '- This is an **unlabeled** replay, so detections are not measures '
+            'of accuracy, precision, or recall.'
+        )
+
+    configurations = [
+        configuration
+        for configuration in report.get('configurations', [])
+        if isinstance(configuration, dict)
+    ]
+    latency_rows = []
+    for configuration in configurations:
+        aggregate = configuration.get('aggregate', {})
+        latency = (
+            aggregate.get('model_response_latency', {})
+            if isinstance(aggregate, dict)
+            else {}
+        )
+        mean = latency.get('mean_seconds') if isinstance(latency, dict) else None
+        if isinstance(mean, (int, float)) and not isinstance(mean, bool):
+            latency_rows.append((str(configuration.get('name', 'unnamed')), mean))
+    if latency_rows:
+        latency_rows.sort(key=lambda item: item[1])
+        values = '; '.join(
+            f'`{name}` {seconds_text(mean)}' for name, mean in latency_rows
+        )
+        lines.append(f'- Mean model-response latency: {values}.')
+        if len(latency_rows) > 1 and latency_rows[1][1] > 0:
+            fastest_name, fastest_mean = latency_rows[0]
+            next_mean = latency_rows[1][1]
+            reduction = next_mean - fastest_mean
+            percent = reduction / next_mean
+            lines.append(
+                f'  `{fastest_name}` was {seconds_text(reduction)} ({percent:.1%}) '
+                'faster than the next-fastest configuration.'
+            )
+
+    count_rows = [
+        (
+            str(configuration.get('name', 'unnamed')),
+            completed_positive_counts(configuration),
+        )
+        for configuration in configurations
+    ]
+    count_rows = [(name, counts) for name, counts in count_rows if counts]
+    if count_rows:
+        values = '; '.join(
+            f'`{name}`: {", ".join(str(count) for count in counts)}'
+            for name, counts in count_rows
+        )
+        lines.append(f'- Positive-decision counts by completed run: {values}.')
+
+    fallbacks, failures = detailed_llm_issue_counts(report)
+    if fallbacks or failures:
+        issue_parts = []
+        if fallbacks:
+            issue_parts.append(
+                f'{fallbacks} safe fallback(s) after malformed model output'
+            )
+        if failures:
+            issue_parts.append(f'{failures} failed LLM call(s)')
+        lines.append(
+            '- Review the detailed decisions before treating detection totals as '
+            'operational results: they include ' + ' and '.join(issue_parts) + '.'
+        )
+
+    lines.extend(
+        [
+            '',
+            '### Reading this report',
+            '',
+            '- A **positive decision** is a final decision marked `Anomaly: Yes`. '
+            'In unlabeled mode, it is not a verified anomaly.',
+            '- **Model latency** is reported only when a measured model response '
+            'was available. An em dash (`—`) means no latency was recorded for '
+            'that final decision.',
+            '- Aggregate severity and action distributions combine all completed '
+            'replays. `None` means no completed decision supplied a value for that '
+            'field.',
+            '- **Unparseable decisions** are final decisions lacking a Yes/No '
+            'anomaly value. A safe fallback after malformed model output can still '
+            'be a parseable No decision, so it may appear in the details without '
+            'increasing this count.',
+            '',
+        ]
+    )
 
 
 def render_ground_truth(lines: list[str], truth: Any) -> None:
@@ -1953,9 +2308,9 @@ def render_report_markdown(report: dict[str, Any]) -> str:
         '',
         f'**Status:** {status}',
         '',
-        '## Experiment summary',
-        '',
     ]
+    append_report_overview(lines, report)
+    lines.extend(['## Experiment summary', ''])
     execution_count = (
         f'{experiment["attempted_executions"]} attempted / '
         f'{experiment["expected_executions"]} expected'
@@ -1987,7 +2342,8 @@ def render_report_markdown(report: dict[str, Any]) -> str:
             [
                 '',
                 '> This was an unlabeled evaluation. Detection counts and '
-                'configuration agreement are not accuracy measurements.',
+                'configuration agreement describe replay behavior only; they are '
+                'not accuracy measurements.',
             ]
         )
 
@@ -2048,6 +2404,24 @@ def render_report_markdown(report: dict[str, Any]) -> str:
     lines.extend(['', '## Configuration details'])
     for configuration in report['configurations']:
         lines.extend(['', f'### {configuration["name"]}', ''])
+        randomization = configuration.get('randomization')
+        if isinstance(randomization, dict):
+            lines.extend(
+                [
+                    f'Randomized from `{randomization.get("source_experiment")}`: '
+                    f'sample {randomization.get("sample_index")} of '
+                    f'{randomization.get("sample_count")} '
+                    f'(seed `{randomization.get("seed")}`).',
+                    '',
+                    '#### Sampled LLM settings',
+                    '',
+                ]
+            )
+            sampled = randomization.get('sampled_llm_parameters', {})
+            if isinstance(sampled, dict):
+                lines.extend(
+                    markdown_table(('Parameter', 'Selected value'), sampled.items())
+                )
         parameters = configuration['evaluated_parameters']
         llm = parameters.get('llm', {})
         parameter_rows = [
@@ -2373,6 +2747,7 @@ def build_report(
             {
                 'name': experiment.name,
                 'configuration_hash': experiment.config_hash,
+                'randomization': experiment.randomization,
                 'evaluated_parameters': evaluated_parameters(
                     experiment.aad_config
                 ),
