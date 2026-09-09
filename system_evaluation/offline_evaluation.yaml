@@ -1,0 +1,75 @@
+# Batch offline replay evaluation configuration.
+#
+# Run from /root/dev_ws with:
+#   python3 src/anomaly_detection/scripts/run_offline_evaluation.py \
+#     --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml
+
+runner:
+  # Unlabeled mode reports detector behavior, latency, reliability, and
+  # agreement between experiments. It does not claim ground-truth accuracy.
+  mode: unlabeled
+
+  # Relative paths are resolved from this YAML file's directory. Pointing at a
+  # bag directory selects only that recording for every experiment below.
+  bags: ./bags/anomaly_20260727_183711
+  output_directory: ./results
+
+  # One selected bag x two configurations x three trials = six executions.
+  # Increase this value for stronger repeatability estimates or override it
+  # from the terminal with --trials N.
+  # playback_rate is configurable; 1.0 preserves the recording's timing.
+  trials: 3
+  playback_rate: 1.0
+  continue_on_error: true
+
+  # Process lifecycle and inference-drain limits.
+  startup_timeout_seconds: 15.0
+  startup_grace_seconds: 1.0
+  playback_timeout_padding_seconds: 30.0
+  post_playback_grace_seconds: 2.0
+  inference_drain_timeout_seconds: 60.0
+  shutdown_timeout_seconds: 20.0
+
+  # Associate a returned decision with recently replayed formatted messages.
+  context_lookback_seconds: 30.0
+  comparison_window_seconds: 5.0
+
+  # Existing AAD topics. Override these only if the runtime node changes them.
+  decision_topic: /aad/decisions
+  alert_topic: /aad/alerts
+  llm_called_topic: /aad/llm_called
+  formatted_topic: /aad/formatted_messages
+
+  detector_command:
+    - ros2
+    - run
+    - anomaly_detection
+    - anomaly_detection_node
+
+# Start with the production AAD configuration and apply only the differences
+# declared by each experiment below.
+base_config: ../anomaly_detection/anomaly_detection/config.yaml
+
+experiments:
+  # Compare only the number of text messages retained for LLM context. Both
+  # runs use the same model, prompt, token window, bag, and image settings.
+  - name: local_text_cache_10
+    overrides:
+      cache_max_items: 10
+      llm:
+        local: true
+        vision_enabled: false
+        image_context_enabled: false
+
+  - name: local_text_cache_20
+    overrides:
+      cache_max_items: 20
+      llm:
+        local: true
+        vision_enabled: false
+        image_context_enabled: false
+
+# To compare another model, duplicate an experiment, give it a unique name,
+# and override llm.model_provider, llm.model, and llm.local as needed. Remote
+# experiments inherit API credentials from the environment; do not store keys
+# in this file.

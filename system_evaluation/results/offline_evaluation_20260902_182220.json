@@ -1,0 +1,266 @@
+{
+  "schema_version": 3,
+  "experiment": {
+    "started_at_utc": "2026-09-02T18:22:20.568638+00:00",
+    "updated_at_utc": "2026-09-02T18:32:48.085596+00:00",
+    "finished_at_utc": "2026-09-02T18:32:48.085596+00:00",
+    "run_status": "completed",
+    "evaluation_mode": "unlabeled",
+    "dry_run": false,
+    "evaluation_yaml": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
+    "recordings_folder": "/root/dev_ws/src/anomaly_detection/system_evaluation/bags/anomaly_20260727_183711",
+    "playback_rate": 1.0,
+    "source_revision": "03163ce8d9c49027d28908d7399a4d86ad1556fa",
+    "expected_executions": 2,
+    "attempted_executions": 2,
+    "aborted_early": false,
+    "bags": [
+      {
+        "path": "/root/dev_ws/src/anomaly_detection/system_evaluation/bags/anomaly_20260727_183711",
+        "duration_seconds": 308.425604489
+      }
+    ]
+  },
+  "overall": {
+    "executions_expected": 2,
+    "executions_completed": 2,
+    "executions_failed": 0,
+    "executions_invalid": 0,
+    "model_response_latency": {
+      "count": 10,
+      "mean_seconds": 20.808434157100002,
+      "median_seconds": 21.3068781395,
+      "minimum_seconds": 7.079421733,
+      "maximum_seconds": 35.006168654,
+      "p90_seconds": 34.627204343,
+      "p95_seconds": 35.006168654
+    },
+    "behavior": {
+      "positive_decisions": 10,
+      "negative_decisions": 10,
+      "positive_decision_rate": 0.5,
+      "alerts": 10
+    },
+    "reliability": {
+      "llm_calls": 10,
+      "pending_llm_calls_at_timeout": 0
+    },
+    "ground_truth_metrics": null,
+    "ground_truth_note": "Unavailable in unlabeled mode; behavior and agreement are not accuracy."
+  },
+  "configuration_comparisons": [
+    {
+      "left_experiment": "local_text_cache_10",
+      "right_experiment": "local_text_cache_20",
+      "shared_executions": 1,
+      "bag_level_positive_agreement": 1.0,
+      "note": "Agreement is not ground-truth accuracy.",
+      "executions": [
+        {
+          "bag": "/root/dev_ws/src/anomaly_detection/system_evaluation/bags/anomaly_20260727_183711",
+          "trial": 1,
+          "left_positive": true,
+          "right_positive": true,
+          "agrees": true,
+          "left_positive_count": 5,
+          "right_positive_count": 5
+        }
+      ]
+    }
+  ],
+  "configurations": [
+    {
+      "name": "local_text_cache_10",
+      "configuration_hash": "a4a9889040f3c1cb36ec609bcf8c3788b737cb302f80bf6b47819a380b511467",
+      "evaluated_parameters": {
+        "api_frequency_seconds": 10,
+        "cache_max_items": 10,
+        "cache_max_age_seconds": 30,
+        "llm_min_trigger_importance": "warning",
+        "llm": {
+          "model_provider": "gemma4",
+          "model": "gemma4:12b-it-qat",
+          "local": true,
+          "vision_enabled": false,
+          "image_context_enabled": false,
+          "image_context_max_frames": 1,
+          "image_max_frames": 2,
+          "num_ctx": 3072
+        }
+      },
+      "aggregate": {
+        "executions_expected": 1,
+        "executions_completed": 1,
+        "executions_failed": 0,
+        "executions_invalid": 0,
+        "model_response_latency": {
+          "count": 5,
+          "mean_seconds": 21.105654298799998,
+          "median_seconds": 25.255916662,
+          "minimum_seconds": 7.079421733,
+          "maximum_seconds": 34.627204343,
+          "p90_seconds": 34.627204343,
+          "p95_seconds": 34.627204343
+        },
+        "behavior": {
+          "positive_decisions": 5,
+          "negative_decisions": 4,
+          "positive_decision_rate": 0.5555555555555556,
+          "alerts": 5
+        },
+        "reliability": {
+          "llm_calls": 5,
+          "pending_llm_calls_at_timeout": 0
+        },
+        "ground_truth_metrics": null,
+        "ground_truth_note": "Unavailable in unlabeled mode; behavior and agreement are not accuracy."
+      },
+      "executions": [
+        {
+          "execution_id": "local_text_cache_10:anomaly_20260727_183711:trial-1",
+          "bag": "/root/dev_ws/src/anomaly_detection/system_evaluation/bags/anomaly_20260727_183711",
+          "experiment": "local_text_cache_10",
+          "trial": 1,
+          "status": "completed",
+          "started_at_utc": "2026-09-02T18:22:20.627973+00:00",
+          "finished_at_utc": "2026-09-02T18:27:35.896245+00:00",
+          "bag_duration_seconds": 308.425604489,
+          "warnings": [
+            "Artifact/LLM-decision counts differ; unmatched records were preserved (artifacts=4, decisions=5)."
+          ],
+          "errors": [],
+          "metrics": {
+            "elapsed_seconds": 315.26824097400095,
+            "model_response_latency": {
+              "count": 5,
+              "mean_seconds": 21.105654298799998,
+              "median_seconds": 25.255916662,
+              "minimum_seconds": 7.079421733,
+              "maximum_seconds": 34.627204343,
+              "p90_seconds": 34.627204343,
+              "p95_seconds": 34.627204343
+            },
+            "behavior": {
+              "decision_count": 9,
+              "positive_decisions": 5,
+              "negative_decisions": 4,
+              "unparseable_decisions": 0,
+              "positive_decision_rate": 0.5555555555555556,
+              "alert_count": 5,
+              "severity_distribution": {
+                "high": 5,
+                "unknown": 4
+              },
+              "action_distribution": {
+                "none": 4,
+                "stop_cart": 5
+              }
+            },
+            "reliability": {
+              "llm_calls": 5,
+              "pending_llm_calls_at_timeout": 0
+            }
+          },
+          "ground_truth": null
+        }
+      ]
+    },
+    {
+      "name": "local_text_cache_20",
+      "configuration_hash": "6717447d1477fd2b5d5cb247f7aeba0604e97fa3cc9733eca16142e87f679cdc",
+      "evaluated_parameters": {
+        "api_frequency_seconds": 10,
+        "cache_max_items": 20,
+        "cache_max_age_seconds": 30,
+        "llm_min_trigger_importance": "warning",
+        "llm": {
+          "model_provider": "gemma4",
+          "model": "gemma4:12b-it-qat",
+          "local": true,
+          "vision_enabled": false,
+          "image_context_enabled": false,
+          "image_context_max_frames": 1,
+          "image_max_frames": 2,
+          "num_ctx": 3072
+        }
+      },
+      "aggregate": {
+        "executions_expected": 1,
+        "executions_completed": 1,
+        "executions_failed": 0,
+        "executions_invalid": 0,
+        "model_response_latency": {
+          "count": 5,
+          "mean_seconds": 20.5112140154,
+          "median_seconds": 17.357839617,
+          "minimum_seconds": 7.411705243,
+          "maximum_seconds": 35.006168654,
+          "p90_seconds": 35.006168654,
+          "p95_seconds": 35.006168654
+        },
+        "behavior": {
+          "positive_decisions": 5,
+          "negative_decisions": 6,
+          "positive_decision_rate": 0.45454545454545453,
+          "alerts": 5
+        },
+        "reliability": {
+          "llm_calls": 5,
+          "pending_llm_calls_at_timeout": 0
+        },
+        "ground_truth_metrics": null,
+        "ground_truth_note": "Unavailable in unlabeled mode; behavior and agreement are not accuracy."
+      },
+      "executions": [
+        {
+          "execution_id": "local_text_cache_20:anomaly_20260727_183711:trial-1",
+          "bag": "/root/dev_ws/src/anomaly_detection/system_evaluation/bags/anomaly_20260727_183711",
+          "experiment": "local_text_cache_20",
+          "trial": 1,
+          "status": "completed",
+          "started_at_utc": "2026-09-02T18:27:35.908530+00:00",
+          "finished_at_utc": "2026-09-02T18:32:48.050994+00:00",
+          "bag_duration_seconds": 308.425604489,
+          "warnings": [
+            "Artifact/LLM-decision counts differ; unmatched records were preserved (artifacts=4, decisions=5)."
+          ],
+          "errors": [],
+          "metrics": {
+            "elapsed_seconds": 312.14235936800105,
+            "model_response_latency": {
+              "count": 5,
+              "mean_seconds": 20.5112140154,
+              "median_seconds": 17.357839617,
+              "minimum_seconds": 7.411705243,
+              "maximum_seconds": 35.006168654,
+              "p90_seconds": 35.006168654,
+              "p95_seconds": 35.006168654
+            },
+            "behavior": {
+              "decision_count": 11,
+              "positive_decisions": 5,
+              "negative_decisions": 6,
+              "unparseable_decisions": 0,
+              "positive_decision_rate": 0.45454545454545453,
+              "alert_count": 5,
+              "severity_distribution": {
+                "high": 5,
+                "unknown": 6
+              },
+              "action_distribution": {
+                "LLM": 2,
+                "none": 4,
+                "stop_cart": 5
+              }
+            },
+            "reliability": {
+              "llm_calls": 5,
+              "pending_llm_calls_at_timeout": 0
+            }
+          },
+          "ground_truth": null
+        }
+      ]
+    }
+  ]
+}
