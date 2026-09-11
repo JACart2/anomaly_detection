@@ -17,6 +17,10 @@ is_paused = False
 current_bag_path = None
 bag_dir = "/root/dev_ws/bags"
 
+DEFAULT_RECORD_TOPICS = (
+    "/ai_anomaly_logging"
+)
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -130,28 +134,42 @@ def get_status():
 
 @app.route("/start", methods=["POST"])
 def start_record():
-    global recording_process, is_paused, current_bag_path
-    if recording_process is not None:
-        return jsonify({"error": "Already recording"}), 400
+  global recording_process, is_paused, current_bag_path
+  if recording_process is not None:
+    return jsonify({"error": "Already recording"}), 400
 
-    data = request.get_json(silent=True) or {}
-    user_prefix = data.get("prefix", "cart_run").strip()
+  data = request.get_json(silent=True) or {}
+  user_prefix = data.get("prefix", "cart_run").strip()
 
-    # Sanitize the input to alphanumeric, underscores, and dashes only
-    clean_prefix = re.sub(r'[^a-zA-Z0-9_\-]', '_', user_prefix).strip('_')
-    if not clean_prefix:
-        clean_prefix = "cart_run"
+  clean_prefix = re.sub(r"[^a-zA-Z0-9_\-]", "_", user_prefix).strip("_")
+  if not clean_prefix:
+    clean_prefix = "cart_run"
 
-    os.makedirs(bag_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    bag_name = f"{clean_prefix}_{timestamp}"
-    current_bag_path = os.path.join(bag_dir, bag_name)
+  os.makedirs(bag_dir, exist_ok=True)
+  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+  bag_name = f"{clean_prefix}_{timestamp}"
+  current_bag_path = os.path.join(bag_dir, bag_name)
 
-    cmd = ["ros2", "bag", "record", "-a", "-o", current_bag_path]
-    recording_process = subprocess.Popen(cmd, preexec_fn=os.setsid)
-    is_paused = False
+  # Read topics from environment variable
+  topics_env = os.environ.get("BAG_RECORD_TOPICS", DEFAULT_RECORD_TOPICS).strip()
 
-    return jsonify({"status": "started", "path": current_bag_path})
+  # Base command without -a
+  cmd = ["ros2", "bag", "record", "-o", current_bag_path]
+
+  if topics_env == "-a" or topics_env == "--all":
+    cmd.append("-a")
+  else:
+    # Split string by whitespace into individual topic args
+    cmd.extend(topics_env.split())
+
+  recording_process = subprocess.Popen(cmd, preexec_fn=os.setsid)
+  is_paused = False
+
+  return jsonify({
+      "status": "started",
+      "path": current_bag_path,
+      "topics": topics_env,
+  })
 
 @app.route("/pause", methods=["POST"])
 def pause_record():
