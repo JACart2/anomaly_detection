@@ -13,6 +13,9 @@ runner:
   # bag directory selects only that recording for every experiment below.
   bags: ./bags/anomaly_20260727_183711
   output_directory: ./results
+  # API endpoints and credential environment-variable names live separately
+  # from experiment/model selection.
+  provider_config: ./llm_providers.yaml
 
   # One selected bag x two configurations x three trials = six executions.
   # Increase this value for stronger repeatability estimates or override it
@@ -69,6 +72,17 @@ experiments:
         vision_enabled: false
         image_context_enabled: false
 
+  # Select a cloud profile and model here. Endpoint and authentication setup
+  # remains in llm_providers.yaml. Uncomment after exporting ANTHROPIC_API_KEY.
+  # - name: claude_cloud
+  #   overrides:
+  #     llm:
+  #       provider: anthropic
+  #       model: claude-sonnet-4-5-20250929
+  #       local: false
+  #       vision_enabled: false
+  #       timeout_seconds: 60
+
   # A randomized experiment expands into one configuration per sample. The
   # sampled LLM values are fixed for every trial of that configuration, so
   # `trials: 3` repeats the same setting three times. Set seed to reproduce the
@@ -88,6 +102,6 @@ experiments:
   #       image_jpeg_quality: [65, 75, 85]
 
 # To compare another model, duplicate an experiment, give it a unique name,
-# and override llm.model_provider, llm.model, and llm.local as needed. Remote
+# and override llm.provider, llm.model, and llm.local as needed. Remote
 # experiments inherit API credentials from the environment; do not store keys
 # in this file.

@@ -26,6 +26,7 @@ DEFAULT_IMAGE_MAX_DIMENSION = 640
 DEFAULT_IMAGE_JPEG_QUALITY = 75
 DEFAULT_INFERENCE_TIMEOUT_SECONDS = 30.0
 DEFAULT_KEEP_ALIVE = '2m'
+PROVIDER_CONFIG_ENV = 'AAD_LLM_PROVIDERS_PATH'
 
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
@@ -191,9 +192,12 @@ class LLMClient:
     def __init__(self, config_path: Optional[str] = None):
         """Initialize model, image, and inference settings from YAML."""
         self.provider = 'openai'
+        self.provider_profile = 'openai'
         self.model_name = 'gpt-4o'
         self.model = None
         self.api_base = None
+        self.api_key = None
+        self.api_version = None
         self.system_prompt = None
         self.image_max_dimension = DEFAULT_IMAGE_MAX_DIMENSION
         self.image_jpeg_quality = DEFAULT_IMAGE_JPEG_QUALITY
@@ -218,7 +222,12 @@ class LLMClient:
                     candidate = data.get('llm', {})
                     if isinstance(candidate, dict):
                         llm_cfg = candidate
-                    self.provider = llm_cfg.get('model_provider', self.provider)
+                    configured_provider = llm_cfg.get('provider')
+                    legacy_provider = llm_cfg.get('model_provider')
+                    self.provider_profile = str(
+                        configured_provider or legacy_provider or self.provider
+                    ).strip()
+                    self.provider = self.provider_profile
                     self.model_name = llm_cfg.get('model', self.model_name)
                     self.system_prompt = llm_cfg.get(
                         'system_prompt', self.system_prompt
@@ -234,8 +243,11 @@ class LLMClient:
             print('Config file not found. Using defaults.')
 
         self._load_performance_config(llm_cfg)
+        if not bool(llm_cfg.get('local', False)):
+            self._load_provider_profile(llm_cfg, config_path)
         self.model = f'{self.provider}/{self.model_name}'
-        self.api_base = os.getenv(f'{self.provider.upper()}_API_BASE', None)
+        if self.api_base is None:
+            self.api_base = os.getenv(f'{self.provider.upper()}_API_BASE', None)
         self.ollama_host = str(
             llm_cfg.get('ollama_host', 'http://localhost:11434')
         ).rstrip('/')
@@ -246,6 +258,126 @@ class LLMClient:
         self.ollama_client = Client(
             host=self.ollama_host,
             **ollama_options,
+        )
+
+    @staticmethod
+    def _configured_profile_value(
+        profile_name: str,
+        profile: dict,
+        setting: str,
+    ) -> Optional[str]:
+        """Resolve a literal provider setting or an environment reference."""
+        literal = profile.get(setting)
+        environment_name = profile.get(f'{setting}_env')
+        if literal is not None and environment_name is not None:
+            raise ValueError(
+                f'Provider profile {profile_name!r} sets both {setting} and '
+                f'{setting}_env'
+            )
+        if environment_name is not None:
+            if (
+                not isinstance(environment_name, str)
+                or not environment_name.strip()
+            ):
+                raise ValueError(
+                    f'Provider profile {profile_name!r} {setting}_env must be '
+                    'a non-empty environment-variable name'
+                )
+            value = os.getenv(environment_name)
+            if not value:
+                raise ValueError(
+                    f'Provider profile {profile_name!r} requires environment '
+                    f'variable {environment_name!r}'
+                )
+            return value
+        if literal is None:
+            return None
+        if not isinstance(literal, str) or not literal.strip():
+            raise ValueError(
+                f'Provider profile {profile_name!r} {setting} must be a '
+                'non-empty string'
+            )
+        return literal.strip()
+
+    def _load_provider_profile(
+        self,
+        llm_cfg: dict,
+        aad_config_path: str,
+    ) -> None:
+        """Load endpoint and credential indirection from separate YAML."""
+        provider_config_value = os.getenv(PROVIDER_CONFIG_ENV) or llm_cfg.get(
+            'provider_config'
+        )
+        if not provider_config_value:
+            return
+        if not isinstance(provider_config_value, str):
+            raise ValueError('llm.provider_config must be a filesystem path')
+
+        provider_config_path = os.path.expanduser(provider_config_value)
+        if not os.path.isabs(provider_config_path):
+            provider_config_path = os.path.join(
+                os.path.dirname(aad_config_path), provider_config_path
+            )
+        provider_config_path = os.path.abspath(provider_config_path)
+        try:
+            with open(provider_config_path, 'r', encoding='utf-8') as stream:
+                document = yaml.safe_load(stream) or {}
+        except OSError as exc:
+            raise ValueError(
+                'Could not read LLM provider config '
+                f'{provider_config_path}: {exc}'
+            ) from exc
+        if not isinstance(document, dict) or not isinstance(
+            document.get('providers'), dict
+        ):
+            raise ValueError(
+                f'LLM provider config {provider_config_path} must contain a '
+                'providers mapping'
+            )
+
+        profile = document['providers'].get(self.provider_profile)
+        if not isinstance(profile, dict):
+            raise ValueError(
+                f'LLM provider profile {self.provider_profile!r} was not found '
+                f'in {provider_config_path}'
+            )
+        if 'api_key' in profile:
+            raise ValueError(
+                f'Provider profile {self.provider_profile!r} must use '
+                'api_key_env instead of storing an API key in YAML'
+            )
+        supported = {
+            'litellm_provider',
+            'api_key_env',
+            'api_base',
+            'api_base_env',
+            'api_version',
+            'api_version_env',
+        }
+        unknown = set(profile).difference(supported)
+        if unknown:
+            raise ValueError(
+                f'Provider profile {self.provider_profile!r} has unsupported '
+                f'setting(s): {", ".join(sorted(unknown))}'
+            )
+
+        litellm_provider = profile.get(
+            'litellm_provider', self.provider_profile
+        )
+        if not isinstance(litellm_provider, str) or not litellm_provider.strip():
+            raise ValueError(
+                f'Provider profile {self.provider_profile!r} '
+                'litellm_provider must be a non-empty string'
+            )
+        self.provider = litellm_provider.strip()
+        self.api_key = self._configured_profile_value(
+            self.provider_profile, profile, 'api_key'
+        )
+        self.api_base = self._configured_profile_value(
+            self.provider_profile, profile, 'api_base'
+        )
+        self.api_version = self._configured_profile_value(
+            self.provider_profile, profile, 'api_version'
         )
 
     def _load_performance_config(self, llm_cfg: dict) -> None:
@@ -364,6 +496,10 @@ class LLMClient:
             completion_options['timeout'] = self.inference_timeout_seconds
         if self.num_predict is not None:
             completion_options['max_tokens'] = self.num_predict
+        if self.api_key is not None:
+            completion_options['api_key'] = self.api_key
+        if self.api_version is not None:
+            completion_options['api_version'] = self.api_version
 
         response = litellm.completion(**completion_options)
         return response.choices[0].message.content

@@ -15,14 +15,16 @@ cache_max_age_seconds: 30
 llm_min_trigger_importance: warning
 
 # The LLM info used to select the model in llm_client.py
-# note: model_provider and model can be identical when local is set to True.
+# note: provider and model can be identical when local is set to True.
 # Args:
-#   model_provider: Name of model provider e.g. openai
+#   provider: Provider profile name from the separate provider config. The
+#             legacy model_provider field remains supported.
 #   model: Name of specific model e.g. gpt-4o
 #   local: Whether to use a local model or an API-based model.
 #   system_prompt: The system prompt passed to the llm.
 llm:
-  model_provider: "gemma4"
+  # Local Ollama does not require a cloud provider profile.
+  provider: "gemma4"
   model: 'gemma4:12b-it-qat'
   local: true
   # Use a dedicated Ollama instance because the default port is occupied by

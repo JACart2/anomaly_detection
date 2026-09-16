@@ -147,6 +147,7 @@ class RunnerSettings:
     mode: str
     bags_path: Path
     output_directory: Path
+    provider_config_path: Path | None
     playback_rate: float
     startup_timeout_seconds: float
     startup_grace_seconds: float
@@ -711,6 +712,20 @@ def resolve_settings(
         output_directory = normalize_location(QUICK_RUN_OUTPUT_DIRECTORY)
     else:
         output_directory = (config_path.parent / 'evaluation_results').resolve()
+    provider_config_value = (
+        args.provider_config
+        if args.provider_config is not None
+        else yaml_runner.get('provider_config')
+    )
+    provider_config_path = (
+        normalize_location(str(provider_config_value), config_path.parent)
+        if provider_config_value
+        else None
+    )
+    if provider_config_path is not None and not provider_config_path.is_file():
+        raise EvaluationError(
+            f'LLM provider config does not exist: {provider_config_path}'
+        )
     mode = str(
         runner_value(args.mode, yaml_runner, 'mode', QUICK_RUN_MODE, 'unlabeled')
     ).strip()
@@ -734,6 +749,7 @@ def resolve_settings(
         mode=mode,
         bags_path=bags_path,
         output_directory=output_directory,
+        provider_config_path=provider_config_path,
         playback_rate=positive_number(
             'runner.playback_rate', yaml_runner.get('playback_rate', 1.0)
         ),
@@ -1588,6 +1604,10 @@ def execute_one(
             yaml.safe_dump(runtime_config, sort_keys=False), encoding='utf-8'
         )
         environment = {**os.environ, 'AAD_CONFIG_PATH': str(runtime_config_path)}
+        if settings.provider_config_path is not None:
+            environment['AAD_LLM_PROVIDERS_PATH'] = str(
+                settings.provider_config_path
+            )
 
         try:
             with detector_log.open('w', encoding='utf-8') as detector_stream:
@@ -2433,7 +2453,10 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                 'Minimum trigger importance',
                 parameters.get('llm_min_trigger_importance'),
             ),
-            ('Model provider', llm.get('model_provider')),
+            (
+                'Model provider',
+                llm.get('provider', llm.get('model_provider')),
+            ),
             ('Model', llm.get('model')),
             ('Local model', llm.get('local')),
             ('Model token context', llm.get('num_ctx')),
@@ -2610,6 +2633,7 @@ def evaluated_parameters(configuration: dict[str, Any]) -> dict[str, Any]:
     llm_value = configuration.get('llm', {})
     llm = llm_value if isinstance(llm_value, dict) else {}
     keys = (
+        'provider',
         'model_provider',
         'model',
         'local',
@@ -2776,6 +2800,11 @@ def build_report(
             'evaluation_mode': settings.mode,
             'dry_run': settings.dry_run,
             'evaluation_yaml': str(config_path),
+            'provider_config': (
+                str(settings.provider_config_path)
+                if settings.provider_config_path is not None
+                else None
+            ),
             'recordings_folder': str(settings.bags_path),
             'playback_rate': settings.playback_rate,
             'source_revision': revision,
@@ -2810,6 +2839,7 @@ def example_configuration() -> dict[str, Any]:
         'runner': {
             'bags': '/path/to/recordings',
             'output_directory': './evaluation_results',
+            'provider_config': './llm_providers.yaml',
             'mode': 'unlabeled',
             'trials': 1,
             'playback_rate': 1.0,
@@ -2869,6 +2899,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--bags', help='Recordings folder or file:// link.')
     parser.add_argument('--config', help='Evaluation YAML path or file:// link.')
     parser.add_argument('--output-dir', help='Override the report directory.')
+    parser.add_argument(
+        '--provider-config',
+        help='Override runner.provider_config with a provider-profile YAML path.',
+    )
     parser.add_argument(
         '--trials',
         type=int,

@@ -97,7 +97,9 @@ llm:
     assert local_call['keep_alive'] == '2m'
 
     remote_response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='remote result'))]
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content='remote result'))
+        ]
     )
     with patch(
         'anomaly_detection.llm_client.litellm.completion',
@@ -119,6 +121,86 @@ def test_optional_image_arguments_are_not_mutable_defaults():
     assert LLMClient.chat.__defaults__ == (None,)
     assert LLMClient.local_chat.__defaults__ == (None,)
     assert LLMClient.prepare_images.__defaults__ == (None,)
+
+
+def test_cloud_provider_profile_separates_model_and_api_setup(tmp_path):
+    """A model selects a profile whose endpoint and secret come separately."""
+    provider_path = tmp_path / 'providers.yaml'
+    provider_path.write_text(
+        """
+providers:
+  team_claude:
+    litellm_provider: anthropic
+    api_base: https://anthropic-gateway.example/v1
+    api_key_env: TEST_ANTHROPIC_API_KEY
+    api_version: '2026-01-01'
+""".lstrip(),
+        encoding='utf-8',
+    )
+    config_path = tmp_path / 'config.yaml'
+    config_path.write_text(
+        """
+llm:
+  provider: team_claude
+  model_provider: inherited_local_provider
+  model: claude-test-model
+  local: false
+  provider_config: providers.yaml
+""".lstrip(),
+        encoding='utf-8',
+    )
+
+    environment = {'TEST_ANTHROPIC_API_KEY': 'test-secret'}
+    with patch.dict(os.environ, environment, clear=False), patch(
+        'anomaly_detection.llm_client.Client'
+    ):
+        client = LLMClient(str(config_path))
+
+    assert client.provider_profile == 'team_claude'
+    assert client.provider == 'anthropic'
+    assert client.model == 'anthropic/claude-test-model'
+
+    remote_response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content='remote result'))]
+    )
+    with patch(
+        'anomaly_detection.llm_client.litellm.completion',
+        return_value=remote_response,
+    ) as completion:
+        assert client.chat('event') == 'remote result'
+
+    request = completion.call_args.kwargs
+    assert request['api_base'] == 'https://anthropic-gateway.example/v1'
+    assert request['api_key'] == 'test-secret'
+    assert request['api_version'] == '2026-01-01'
+
+
+def test_cloud_provider_profile_rejects_inline_api_key(tmp_path):
+    """Provider YAML cannot accidentally become a checked-in secret store."""
+    provider_path = tmp_path / 'providers.yaml'
+    provider_path.write_text(
+        'providers:\n  unsafe:\n    api_key: do-not-store-this-here\n',
+        encoding='utf-8',
+    )
+    config_path = tmp_path / 'config.yaml'
+    config_path.write_text(
+        """
+llm:
+  provider: unsafe
+  model: example-model
+  local: false
+  provider_config: providers.yaml
+""".lstrip(),
+        encoding='utf-8',
+    )
+
+    with patch('anomaly_detection.llm_client.Client'):
+        try:
+            LLMClient(str(config_path))
+        except ValueError as exc:
+            assert 'api_key_env' in str(exc)
+        else:
+            raise AssertionError('inline provider API key should be rejected')
 
 
 def test_default_runtime_config_enables_gemma4_vision():

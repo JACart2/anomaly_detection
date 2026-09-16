@@ -117,11 +117,38 @@ Start the anomaly detection node:
 ros2 run anomaly_detection anomaly_detection_node
 ```
 
-This requires a `.env` file in the same folder as the AAD node, with API keys in the format for LiteLLM, or Ollama CLI installed with appropriate models on the host machine:
+For local inference, install Ollama and the configured model. For cloud
+inference, select a provider profile and model in the AAD/evaluation YAML:
 
+```yaml
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-5-20250929
+  local: false
 ```
-<Provider-Name>_API_KEY=<Your-Key>
+
+Offline evaluation reads endpoint and authentication setup from the separate
+`runner.provider_config` file. `system_evaluation/llm_providers.yaml` contains
+ready-to-use OpenAI and Anthropic profiles. Profiles reference environment
+variable names rather than containing secrets:
+
+```yaml
+providers:
+  anthropic:
+    litellm_provider: anthropic
+    api_key_env: ANTHROPIC_API_KEY
 ```
+
+Export the referenced key before launching the evaluator:
+
+```bash
+export ANTHROPIC_API_KEY='...'
+python3 scripts/run_offline_evaluation.py \
+  --config system_evaluation/offline_evaluation.yaml
+```
+
+Use `--provider-config PATH` to select a different profile file. Direct node
+runs may instead set `AAD_LLM_PROVIDERS_PATH` or `llm.provider_config`.
 
 See `config.yaml` for full deployment configuration options, including model selection, topic names, and trigger script registration.
 
