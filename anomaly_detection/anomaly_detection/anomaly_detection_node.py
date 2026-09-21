@@ -35,6 +35,7 @@ from collections import deque
 
 import rclpy
 import yaml
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from anomaly_msg.msg import AnomalyMsg
 from cv_bridge import CvBridge
 from rclpy.executors import SingleThreadedExecutor
@@ -1395,7 +1396,8 @@ class AnomalyDetectionNode(Node):
 
         Resolution order:
           1) AAD_CONFIG_PATH environment variable
-          2) config.yaml in the same folder as this script
+          2) config.yaml installed in this package's share directory
+          3) config.yaml in the same folder as this script
 
         Returns
         -------
