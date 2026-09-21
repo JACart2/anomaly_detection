@@ -13,7 +13,7 @@
 
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>built_interfaces</depend>
+  <depend>builtin_interfaces</depend>
 
   <!-- Jazzy requirement for message packages -->
   <member_of_group>rosidl_interface_packages</member_of_group>

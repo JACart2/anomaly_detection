@@ -1,12 +1,18 @@
 # AAD Configuration File
 # Controls artifact generation and API trigger behavior.
 
-#The amount of time between periodic API calls
-api_frequency_seconds: 15
+# Send the newest routine camera observation to the model every 10 seconds.
+# Actionable warning/error events still trigger their own processing pass and
+# reuse a fresh cached frame so the same image is not sent twice.
+api_frequency_seconds: 10
 
 #The max amount of messages stored
-cache_max_items: 100
+cache_max_items: 20
 cache_max_age_seconds: 30
+
+# Keep INFO logs as context, but avoid model work until an actionable event
+# arrives. Accepted values: info, warning, error (or the matching 0/1/2 value).
+llm_min_trigger_importance: warning
 
 # The LLM info used to select the model in llm_client.py
 # note: model_provider and model can be identical when local is set to True.
@@ -15,21 +21,48 @@ cache_max_age_seconds: 30
 #   model: Name of specific model e.g. gpt-4o
 #   local: Whether to use a local model or an API-based model.
 #   system_prompt: The system prompt passed to the llm.
-llm: 
-  model_provider: "mistral"
-  model: 'mistral'
+llm:
+  model_provider: "gemma4"
+  model: 'gemma4:12b-it-qat'
   local: true
+  # Use a dedicated Ollama instance because the default port is occupied by
+  # a CPU-only service. CUDA initialization is currently faulted, while the
+  # Vulkan backend provides full NVIDIA GPU offload.
+  ollama_host: "http://127.0.0.1:21434"
+  ollama_llm_library: "vulkan"
+  # Keep the model resident so anomaly requests do not pay the cold-start cost.
+  warm_on_startup: true
+  vision_enabled: true
+  # Send one fresh frame on ordinary periodic context checks. Warning/error and
+  # explicit-trigger checks may use the larger rolling pre-event history below.
+  image_context_enabled: true
+  image_context_max_frames: 1
+  image_max_frames: 2
+  # Keep a frame eligible for one complete routine interval. Frames remain
+  # cached after inference so every request can include visual context.
+  image_max_age_seconds: 10.0
+  image_max_dimension: 448
+  image_jpeg_quality: 75
+  timeout_seconds: 35
+  num_ctx: 3072
+  # Keep the structured decision concise enough for the latency budget.
+  num_predict: 96
+  think: false
+  keep_alive: "2m"
   system_prompt: >-
     You are an anomaly detection assistant for an autonomous vehicle system.
-    Consider node sources, severity, message content, and other relevant aspects of the provided logs AND base64 encoded images. You will also be provided camera data facing the front and driver seat of the cart.
-    Analyze the provided log messages and respond ONLY with a JSON object. 
+    Consider node sources, severity, message content, and other relevant aspects of the provided logs. When camera frames are attached, inspect every frame and match it to its source label and timestamp.
+    When at least one image is attached, the summary must start with "Image observation:" and plainly describe what is visibly shown. Include the drivable area or path, relevant people, vehicles, and objects, their approximate image position (left, center, right and foreground, middle distance, or background), whether the visible path appears clear or obstructed, and any image-quality limitation such as darkness, blur, glare, or occlusion. Describe only visible evidence. Do not guess an object's identity, exact distance, speed, motion, intent, or danger when the image cannot establish it. After the visual description, add "Log context:" and explain whether the logs support or contradict the visual observation and why the final anomaly, severity, and action were selected. If no image is attached, do not invent an image description.
+    Objects merely visible in a camera frame, whether near or far, are normal context and must not be classified as an anomaly. Only classify an obstacle as high severity when the accompanying logs explicitly report that a stop was requested. Do not infer a stop request from an image alone.
+    For MOLA localization health, do not expect a legacy fitness score. Evaluate active/inactive state, ICP quality, dropped frame ratio, stale or missing MOLA pose updates, LiDAR cloud freshness, relocalization requests, and pose-jump or unreasonable-speed/yaw-rate warnings.
+    Analyze the provided log messages and respond ONLY with a JSON object.
     No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
     Use exactly this format:
-    {"anomaly": true/false, "severity": "low|medium|high|unknown",
-    "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
+    {"anomaly": true/false, "severity": "low|medium|high|none",
+    "action": "stop_cart|alert_admin|none", "summary": "when an image is attached: Image observation: <visible scene>. Log context: <logged evidence and decision>; otherwise: explanation of the overall situation from the logs. Always report on warnings and errors"}
 
 ## See README for trigger script details. These are paths under ./triggers containing ROS2 nodes.
-trigger_scripts: 
+trigger_scripts:
 # - dummy_trigger
 
 ## Where trigger scripts send messages to/where AAD system listens for trigger messages.
@@ -38,14 +71,28 @@ trigger_input_topic: "/trigger_messages"
 ## Input topic for AAD system/output topic for anomalous alerts.
 raw_input_topic: "/ai_anomaly_logging"
 alert_topic: "/aad/alerts"
+formatted_message_topic: "/aad/formatted_messages"
 
-## Throttling for INFO type messages & how many seconds to pass between INFO msg.
-throttle_info: true
-info_min_period_sec: 0.1
+## Duplicate blocking for anomaly messages.
+duplicate_message_min_period_sec: 2.0
+
+## Publisher-level rate limiting by severity.
+## Limits messages from the same node_name and importance bucket.
+## Set a value to 0.0 to disable limiting for that severity.
+publisher_message_min_period_sec:
+  info: 5.0
+  warning: 3.0
+  error: 0.0
+
+# Publish one immediate stop alert per active burst. Repeated ERROR telemetry is
+# still cached and sent to the LLM as context during this cooldown.
+immediate_alert_min_period_sec: 10.0
+
+error_capture_window_sec: 2.0
 
 ## Logging frequency.
-log_every_n_msgs: 1
+log_every_n_msgs: 50
 
 ## Location for API call artifacts & how much to cache in the artifacts.
 api_artifact_output_dir: "/root/dev_ws/src/anomaly_detection/logs"
-raw_history_max_items: 50
+api_artifact_max_files: 250

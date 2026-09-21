@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.substitutions import FindPackageShare
@@ -24,7 +24,7 @@ def generate_launch_description():
 
     bag_name_arg = DeclareLaunchArgument(
         'bag_name',
-        default_value='src/anomaly_detection/system_evaluation/bags/anomaly_bag',
+        default_value='/root/dev_ws/bags/anomaly_bag',
         description='Output rosbag path (directory + name)'
     )
 
@@ -32,15 +32,6 @@ def generate_launch_description():
         'launch_dashboard',
         default_value='true',
         description='When true, launches the dashboard viewer.'
-    )
-
-        # Rosbag recording
-    launch_dashboard_command = ExecuteProcess(
-        cmd=[
-            'python3', 'src/anomaly_detection/anomaly_detection/anomaly_detection/aad_dashboard_bridge.py',
-        ],
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('launch_dashboard'))
     )
 
     # # Navigation (James)
@@ -94,7 +85,18 @@ def generate_launch_description():
         cmd=[
             'ros2', 'bag', 'record',
             '-o', LaunchConfiguration('bag_name'),
-            '/ai_anomaly_logging'   # <-- topics only here
+            '--qos-profile-overrides-path',
+            PathJoinSubstitution([
+                FindPackageShare('anomaly_detection'),
+                'config',
+                'rosbag_qos.yaml',
+            ]),
+            '--topics',
+            '/ai_anomaly_logging',
+            '/aad/alerts',
+            '/aad/decisions',
+            '/aad/formatted_messages',
+            '/aad/llm_called',
         ],
         output='screen',
         condition=IfCondition(LaunchConfiguration('record'))
@@ -107,10 +109,10 @@ def generate_launch_description():
         launch_dashboard,
         # navigation_james,
         # navigation_madison,
-        launch_dashboard_command,
         ui_node,
         # collision_node,
         anomaly_node,
+        dashboard_node,
         bag_record
     ])
 

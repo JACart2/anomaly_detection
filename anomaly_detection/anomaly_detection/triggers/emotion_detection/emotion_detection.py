@@ -195,7 +195,11 @@ class EmotionDetection(Node):
             if top_emotion in ["fear", "sad", "surprise", "angry", "disgust"]:
                 ## returning because something is bad
                 alert = ROSString()
-                alert.data = (f"emotion_detection trigger script claims passenger is experiencing {top_emotion} at a {average_confidence}% confidence")
+                alert.data = (
+                    f"severity=high action=stop_cart "
+                    f"summary=emotion_detection trigger script claims passenger is "
+                    f"experiencing {top_emotion} at a {average_confidence}% confidence"
+                )
                 self.publish_anomaly_message(alert)
 
     def process_frames(self) -> None:

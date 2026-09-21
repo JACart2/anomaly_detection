@@ -4,7 +4,7 @@ Last updated: 4/28/2026
 Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litellm.ai/docs/) or local Ollama model for determinations. 
 
 1. Subscribes to `config.yaml:raw_input_topic` containing AnomalyMsg types.
-2. Throttles certain message types with `config.yaml:throttle_info`, and converts AnomalyMsgs into compact string format for LLM.
+2. Blocks duplicate messages with `config.yaml:duplicate_message_min_period_sec`, and converts AnomalyMsgs into compact string format for LLM.
 3. Periodic/on-demand LLM trigger (`config.yaml:trigger_scripts` via ROS node publishing to `config.yaml:trigger_input_topic`).
 4. LLM call using `llm_client.py`; a JSON artifact capturing the cached input data and model response is saved to `config.yaml:api_artifact_output_dir` on each invocation.
 5. LLM response standardization into `Decision` type using `response_handler.py`.
@@ -36,12 +36,20 @@ The declaration of the custom message type that the anomaly detection system exp
 ### ./tester
 Provides utility nodes such as: `fake_camera_data` and `lidar_test_node`. Both publish fake data and may be used to test dataflow in the system without external node access. Run with `ros2 run tester <NODE>`.
 
+### ./scripts
+Standalone utility scripts that operate outside the ROS2 graph (not built/installed as part of any package).
+
+`extract_anomaly_bag.py` reads a recorded `.mcap` bag of `AnomalyMsg` records and writes a self-contained report: `messages.json`, `messages.csv`, `summary.json`, extracted images under `images/`, and a searchable/filterable `index.html`. Useful for reviewing a run's full anomaly log context, including embedded camera frames, without replaying the bag. Run with:
+```
+python3 scripts/extract_anomaly_bag.py path/to/bag.mcap [-o output_dir]
+```
+
 ### ./anomaly_detection
 The ROS2 node declaration for the anomaly detection system. 
 
 `anomaly_detection_node.py` contains the manager that drives the system.
 
-`config.yaml` contains system configuration such as API call frequency, cache size, LLM specs (prompt, local enabling, system_prompt), trigger script specification & trigger topic, input data topic for the AAD system, output alert topic for the AAD system, message throttling, logging frequency, and artifact output path & size.
+`config.yaml` contains system configuration such as API call frequency, cache size, LLM specs (prompt, local enabling, system_prompt), trigger script specification & trigger topic, input data topic for the AAD system, output alert topic for the AAD system, duplicate message blocking, logging frequency, and artifact output path & size.
 
 `llm_client.py` integrates with the LLM either through an API call in LiteLLM, or through a locally hosted model through the Ollama CLI.
 

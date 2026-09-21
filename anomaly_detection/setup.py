@@ -8,6 +8,7 @@ setup(
     name=package_name,
     version='0.0.1',
     packages=['anomaly_detection'],
+    package_data={'anomaly_detection': ['config.yaml', 'aad_dashboard.html']},
     install_requires=['setuptools', 'anomaly_msg'],
     zip_safe=True,
     maintainer='Your Name',
@@ -20,15 +21,14 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py')),
-        (os.path.join('share', package_name),
-            ['anomaly_detection/config.yaml']),
+        (os.path.join('share', package_name, 'config'),
+            glob('config/*.yaml')),
 
     ],
     entry_points={
         'console_scripts': [
             'anomaly_detection_node = anomaly_detection.anomaly_detection_node:main',
-            "aad_dashboard_bridge = anomaly_detection.aad_dashboard_bridge:main"
+            "aad_dashboard_bridge = anomaly_detection.aad_dashboard_bridge:main",
         ],
     },
 )
-
