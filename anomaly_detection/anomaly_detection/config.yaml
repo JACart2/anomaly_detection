@@ -27,10 +27,11 @@ llm:
   provider: "gemma4"
   model: 'gemma4:12b-it-qat'
   local: true
-  # Use a dedicated Ollama instance because the default port is occupied by
-  # a CPU-only service. CUDA initialization is currently faulted, while the
-  # Vulkan backend provides full NVIDIA GPU offload.
+  # Preferred Ollama endpoint. At startup the node automatically uses another
+  # reachable local endpoint if that endpoint already contains this model.
+  # Add nonstandard endpoints to ollama_hosts when needed.
   ollama_host: "http://127.0.0.1:21434"
+  ollama_hosts: []
   ollama_llm_library: "vulkan"
   # Keep the model resident so anomaly requests do not pay the cold-start cost.
   warm_on_startup: true
@@ -45,10 +46,10 @@ llm:
   image_max_age_seconds: 10.0
   image_max_dimension: 448
   image_jpeg_quality: 75
-  timeout_seconds: 35
+  timeout_seconds: 90
   num_ctx: 3072
-  # Keep the structured decision concise enough for the latency budget.
-  num_predict: 96
+  # Leave enough room to close the JSON object after summarizing several errors.
+  num_predict: 256
   think: false
   keep_alive: "2m"
   system_prompt: >-

@@ -68,14 +68,17 @@ Each trigger script runs as its own ROS node and publishes to the `config.yaml:t
 
 ## Offline Testing
 
-A script is provided for running multiple configs against the dataset in batch:
+A script is provided for replaying recorded bags against one or more experiments. The shared detector configuration and experiment-specific system prompts are declared in `system_evaluation/offline_evaluation.yaml`:
 
 ```
-python3 path/to/run_aad_config_tests.py --csv dataset.csv --configs openai_config.yaml ollama_config.yaml other_configs.yaml
+./src/anomaly_detection/scripts/run_offline_evaluation.py \
+  --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml
 ```
 
 **Notes:**
-- Create `bags/` and `configs/` folders inside `dev_ws/` before running
+- The executable automatically sources the detected ROS installation and nearest workspace `install/setup.bash`
+- Evaluation bags live under `src/anomaly_detection/system_evaluation/bags/`
+- Add or change an experiment prompt through `experiments[].overrides.llm.system_prompt`
 - Run the script from the `dev_ws/` directory; otherwise it will be unable to start `anomaly_detection_node`
 
 ### Dataset Outline

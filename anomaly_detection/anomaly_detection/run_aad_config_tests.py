@@ -329,8 +329,8 @@ def run_evaluation(csv_path: str, config_paths: list[str], bags_dir: str) -> lis
 def main(args=None) -> None:
     parser = argparse.ArgumentParser(description="Eval AAD node across bags and configs.")
     parser.add_argument("--csv",        default="src/anomaly_detection/system_evaluation/aad_dataset.csv",              help="Path to dataset_outline.csv")
-    parser.add_argument("--configs",    default=None, nargs="*", help="One or more config.yaml paths (or leave empty to use all in configs/)")
-    parser.add_argument("--config_dir", default="src/anomaly_detection/system_evaluation/configs",                      help="Directory to search for configs if --configs is not provided.")
+    parser.add_argument("--configs",    default=None, nargs="*", help="One or more config.yaml paths (or leave empty to search --config_dir)")
+    parser.add_argument("--config_dir", default="src/anomaly_detection/anomaly_detection/anomaly_detection",          help="Directory to search for configs if --configs is not provided.")
     parser.add_argument("--bags",       default="src/anomaly_detection/system_evaluation/bags",                         help="Directory containing .mcap bag files")
     parser.add_argument("--output",     default="src/anomaly_detection/system_evaluation/eval_results.json",           help="Output JSON path")
     args = parser.parse_args()

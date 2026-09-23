@@ -87,7 +87,7 @@ offline_evaluation/
 │   ├── local_vision.yaml
 │   └── remote_vision.yaml
 └── results/
-    └── offline_evaluation_YYYYMMDD_HHMMSS.md
+    └── YYYY-MM-DD_HH-MM-SS.md
 ```
 
 The exact folder organization should remain configurable. The runner should recognize logical ROS bag directories and avoid treating split MCAP files as separate runs.
@@ -587,7 +587,7 @@ The judge cannot establish whether an anomaly was real without ground truth. Thi
 Each batch invocation should create one collision-safe UTC timestamped file:
 
 ```text
-offline_evaluation_YYYYMMDD_HHMMSS.md
+YYYY-MM-DD_HH-MM-SS.md
 ```
 
 The Markdown report should contain:

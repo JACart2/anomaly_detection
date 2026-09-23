@@ -203,6 +203,27 @@ llm:
             raise AssertionError('inline provider API key should be rejected')
 
 
+def test_explicit_ollama_host_overrides_the_yaml_endpoint(tmp_path):
+    """A discovered local server is retained by the reusable client."""
+    config_path = tmp_path / 'config.yaml'
+    config_path.write_text(
+        'llm:\n  ollama_host: http://127.0.0.1:21434\n',
+        encoding='utf-8',
+    )
+
+    with patch('anomaly_detection.llm_client.Client') as client_class:
+        client = LLMClient(
+            str(config_path),
+            ollama_host='http://127.0.0.1:11434',
+        )
+
+    assert client.ollama_host == 'http://127.0.0.1:11434'
+    client_class.assert_called_once_with(
+        host='http://127.0.0.1:11434',
+        timeout=30.0,
+    )
+
+
 def test_default_runtime_config_enables_gemma4_vision():
     """The deployed default uses the intended local multimodal model."""
     config_path = os.path.join(

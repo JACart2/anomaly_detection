@@ -231,6 +231,10 @@ class AnomalyDetectionNode(Node):
         self.ollama_host = str(
             llm_config.get("ollama_host", "http://localhost:11434")
         ).rstrip("/")
+        configured_hosts = llm_config.get("ollama_hosts", [])
+        self.ollama_hosts = (
+            configured_hosts if isinstance(configured_hosts, list) else []
+        )
         self.ollama_llm_library = str(
             llm_config.get("ollama_llm_library", "")
         ).strip()
@@ -387,10 +391,12 @@ class AnomalyDetectionNode(Node):
 
         # Start local Ollama once, before first inference
         if self.llm_local:
-
-            if self._is_ollama_ready():
+            discovered_host = self._find_ollama_host_with_model()
+            if discovered_host is not None:
+                self.ollama_host = discovered_host
                 self.get_logger().info(
-                    f"Detected existing Ollama server at {self.ollama_host}; reusing it."
+                    "Detected Ollama server with configured model at "
+                    f"{self.ollama_host}; reusing it."
                 )
             else:
                 self._start_local_ollama()
@@ -403,7 +409,10 @@ class AnomalyDetectionNode(Node):
                 )
 
         # Create one reusable client
-        self.llm = LLMClient(config_path=self.config_path)
+        self.llm = LLMClient(
+            config_path=self.config_path,
+            ollama_host=self.ollama_host if self.llm_local else None,
+        )
 
         self.get_logger().info(
             "AAD node started with config: "
@@ -1170,6 +1179,54 @@ class AnomalyDetectionNode(Node):
             return True
         except Exception:
             return False
+
+    def _find_ollama_host_with_model(self) -> str | None:
+        """Return a reachable local Ollama host that has the configured model.
+
+        A local model may be installed on a different Ollama instance than the
+        endpoint saved in the YAML. Prefer that configured endpoint, then an
+        explicit ``ollama_hosts`` list, ``OLLAMA_HOST``, and common local ports.
+        """
+        llm_config = self.config.get("llm", {})
+        model_name = str(llm_config.get("model", "")).strip()
+        candidates = [
+            self.ollama_host,
+            *[str(host).strip() for host in self.ollama_hosts],
+            os.getenv("OLLAMA_HOST", "").strip(),
+            "http://127.0.0.1:11434",
+            "http://127.0.0.1:21434",
+        ]
+        seen: set[str] = set()
+        for candidate in candidates:
+            host = candidate.rstrip("/")
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            try:
+                response = Client(host=host, timeout=2.0).list()
+                models = getattr(response, "models", None)
+                if models is None and isinstance(response, dict):
+                    models = response.get("models", [])
+                names: set[str] = set()
+                for model in models or []:
+                    if isinstance(model, dict):
+                        name = model.get("model") or model.get("name")
+                    else:
+                        name = getattr(model, "model", None) or getattr(
+                            model, "name", None
+                        )
+                    if name:
+                        names.add(str(name))
+                if model_name in names:
+                    return host
+                self.get_logger().debug(
+                    f"Ollama server at {host} does not contain {model_name}."
+                )
+            except Exception as exc:
+                self.get_logger().debug(
+                    f"Ollama server unavailable at {host}: {exc}"
+                )
+        return None
 
     def _start_local_ollama(self) -> None:
         """

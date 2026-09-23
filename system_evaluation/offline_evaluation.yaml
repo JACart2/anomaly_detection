@@ -1,7 +1,7 @@
 # Batch offline replay evaluation configuration.
 #
 # Run from /root/dev_ws with:
-#   python3 src/anomaly_detection/scripts/run_offline_evaluation.py \
+#   ./src/anomaly_detection/scripts/run_offline_evaluation.py \
 #     --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml
 
 runner:
@@ -11,17 +11,17 @@ runner:
 
   # Relative paths are resolved from this YAML file's directory. Pointing at a
   # bag directory selects only that recording for every experiment below.
-  bags: ./bags/anomaly_20260727_183711
+  bags: ./bags/madison_test_1_20260909_205036
   output_directory: ./results
   # API endpoints and credential environment-variable names live separately
   # from experiment/model selection.
   provider_config: ./llm_providers.yaml
 
-  # One selected bag x two configurations x three trials = six executions.
+  # One selected bag x four configurations x the selected trial count.
   # Increase this value for stronger repeatability estimates or override it
   # from the terminal with --trials N.
   # playback_rate is configurable; 1.0 preserves the recording's timing.
-  trials: 3
+  trials: 1
   playback_rate: 1.0
   continue_on_error: true
 
@@ -33,9 +33,10 @@ runner:
   inference_drain_timeout_seconds: 60.0
   shutdown_timeout_seconds: 20.0
 
-  # Associate a returned decision with recently replayed formatted messages.
-  context_lookback_seconds: 30.0
-  comparison_window_seconds: 5.0
+  # Semantic response judging makes extra model calls after all replays finish.
+  # Keep it disabled for faster reports; enable it when summary-level comparison
+  # is worth the additional inference time.
+  semantic_judge_enabled: false
 
   # Existing AAD topics. Override these only if the runtime node changes them.
   decision_topic: /aad/decisions
@@ -49,28 +50,43 @@ runner:
     - anomaly_detection
     - anomaly_detection_node
 
-# Start with the production AAD configuration and apply only the differences
-# declared by each experiment below.
+# Every experiment starts from the production detector configuration. Keep
+# prompt variants here so an offline study does not require copied AAD configs.
 base_config: ../anomaly_detection/anomaly_detection/config.yaml
 
 experiments:
-  # Compare only the number of text messages retained for LLM context. Both
-  # runs use the same model, prompt, token window, bag, and image settings.
-  - name: local_text_cache_10
+  - name: local-baseline
     overrides:
-      cache_max_items: 10
       llm:
-        local: true
-        vision_enabled: false
-        image_context_enabled: false
+        num_ctx: 2048
+        num_predict: 192
+        image_jpeg_quality: 65
+        system_prompt: >-
+          You are an anomaly detection assistant for an autonomous vehicle system.
+          Consider node sources, severity, message content, and other relevant aspects of the provided logs.
+          For MOLA localization health, do not expect a legacy fitness score. Evaluate active/inactive state, ICP quality, dropped frame ratio, stale or missing MOLA pose updates, LiDAR cloud freshness, relocalization requests, and pose-jump or unreasonable-speed/yaw-rate warnings.
+          Analyze the provided log messages and respond ONLY with a JSON object.
+          No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
+          Use exactly this format:
+          {"anomaly": true/false, "severity": "low|medium|high|unknown",
+          "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
 
-  - name: local_text_cache_20
+  - name: local-golf-cart
     overrides:
-      cache_max_items: 20
       llm:
-        local: true
-        vision_enabled: false
-        image_context_enabled: false
+        num_ctx: 3072
+        num_predict: 256
+        image_jpeg_quality: 75
+        system_prompt: >-
+          You are an anomaly detection assistant for an autonomous golf cart system.
+          Consider node sources, severity, message content, timing, and overall system behavior in the provided logs.
+          Monitor both system integrity and drive wellbeing, including ride smoothness, stability, responsiveness, and battery health.
+          For MOLA localization health, do not expect a legacy fitness score. Evaluate active/inactive state, ICP quality, dropped frame ratio, stale or missing MOLA pose updates, LiDAR cloud freshness, relocalization requests, and pose-jump or unreasonable-speed/yaw-rate warnings.
+          Analyze the provided log messages and respond ONLY with a JSON object.
+          No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
+          Use exactly this format:
+          {"anomaly": true/false, "severity": "low|medium|high|unknown",
+          "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
 
   # Select a cloud profile and model here. Endpoint and authentication setup
   # remains in llm_providers.yaml. Uncomment after exporting ANTHROPIC_API_KEY.
@@ -100,6 +116,40 @@ experiments:
   #         range: [64, 160]
   #         integer: true
   #       image_jpeg_quality: [65, 75, 85]
+
+  # This experiment intentionally inherits the production system prompt.
+  - name: local-production-prompt-long-context
+    overrides:
+      llm:
+        num_ctx: 4096
+        num_predict: 320
+        image_jpeg_quality: 85
+
+  # This remains one evaluated configuration because samples is 1. The seed
+  # makes its randomly selected parameters reproducible across later runs.
+  - name: local-evidence-first-randomized
+    overrides:
+      llm:
+        system_prompt: >-
+          You are an evidence-first safety monitor for an autonomous golf cart.
+          Review the supplied logs in chronological order and assess the overall state of the cart, including localization, sensing, motion control, steering, battery health, and operator safety.
+          Give more weight to repeated or correlated warnings and errors than to an isolated transient message. Distinguish a persistent unsafe condition from degraded operation that only requires administrator attention. Use stop_cart only when the evidence indicates an immediate safety risk, alert_admin for a real issue that does not require an immediate stop, and none when the evidence does not establish an anomaly.
+          For MOLA localization, assess active state, ICP quality, dropped frames, stale or missing pose updates, LiDAR freshness, relocalization requests, pose jumps, and unreasonable speed or yaw-rate warnings. Do not expect a legacy fitness score.
+          If camera images are attached, describe only what is visibly supported. Do not infer an object's identity, distance, speed, motion, intent, or danger from an unclear image, and do not treat an object as an anomaly unless the logs provide supporting evidence.
+          Return exactly one valid JSON object with no markdown, code fence, preamble, or trailing text. Use exactly these four keys and value types:
+          {"anomaly": true, "severity": "low|medium|high|unknown", "action": "stop_cart|alert_admin|none", "summary": "brief evidence-based explanation"}
+          Set anomaly to either true or false. Select exactly one listed severity and action value, and keep summary as a JSON string.
+    randomize:
+      samples: 1
+      seed: 20260923
+      llm:
+        num_ctx:
+          choices: [2048, 3072, 4096]
+        num_predict:
+          range: [192, 384]
+          integer: true
+        image_jpeg_quality:
+          choices: [65, 75, 85]
 
 # To compare another model, duplicate an experiment, give it a unique name,
 # and override llm.provider, llm.model, and llm.local as needed. Remote

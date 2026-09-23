@@ -1,6 +1,6 @@
 [
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy 2.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
     "bag_file": "rosbag2_2026_05_02-01_11_59",
     "category": "Driver issue",
     "description": "Driver missing",
@@ -15,10 +15,11 @@
         "action": "stop_cart",
         "summary": "Obstacle"
       }
-    ]
+    ],
+    "experiment": "local-golf-cart-drive-health"
   },
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy 2.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
     "bag_file": "rosbag2_2026_05_02-01_12_26",
     "category": "Driver issue",
     "description": "Drive unconcious",
@@ -33,10 +34,11 @@
         "action": "stop_cart",
         "summary": "Driver"
       }
-    ]
+    ],
+    "experiment": "local-golf-cart-drive-health"
   },
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
     "bag_file": "rosbag2_2026_05_02-01_11_59",
     "category": "Driver issue",
     "description": "Driver missing",
@@ -51,10 +53,11 @@
         "action": "stop_cart",
         "summary": "Pedestrian"
       }
-    ]
+    ],
+    "experiment": "local-golf-cart"
   },
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config copy.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
     "bag_file": "rosbag2_2026_05_02-01_12_26",
     "category": "Driver issue",
     "description": "Drive unconcious",
@@ -76,10 +79,11 @@
         "action": "stop_cart",
         "summary": "Pedestrian"
       }
-    ]
+    ],
+    "experiment": "local-golf-cart"
   },
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
     "bag_file": "rosbag2_2026_05_02-01_11_59",
     "category": "Driver issue",
     "description": "Driver missing",
@@ -101,10 +105,11 @@
         "action": "stop_cart",
         "summary": "Pedestrian"
       }
-    ]
+    ],
+    "experiment": "local-baseline"
   },
   {
-    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/configs/local_config.yaml",
+    "config": "/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml",
     "bag_file": "rosbag2_2026_05_02-01_12_26",
     "category": "Driver issue",
     "description": "Drive unconcious",
@@ -126,6 +131,7 @@
         "action": "stop_cart",
         "summary": "Obstacle"
       }
-    ]
+    ],
+    "experiment": "local-baseline"
   }
 ]

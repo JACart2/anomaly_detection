@@ -15,7 +15,7 @@ replays the bag, collects decisions, and writes a detailed Markdown report.
 from __future__ import annotations
 
 import argparse
-from collections import deque
+from collections import Counter
 import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,10 +36,70 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 
 import yaml
+
+
+AUTO_SOURCE_MARKER = 'AAD_OFFLINE_EVALUATION_AUTOSOURCED'
+
+
+def find_ros_setup() -> Path | None:
+    """Find the active or locally installed ROS distribution setup script."""
+    candidates: list[Path] = []
+    ros_distro = os.environ.get('ROS_DISTRO')
+    if ros_distro:
+        candidates.append(Path('/opt/ros') / ros_distro / 'setup.bash')
+    candidates.append(Path('/opt/ros/jazzy/setup.bash'))
+    candidates.extend(sorted(Path('/opt/ros').glob('*/setup.bash')))
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def find_workspace_setup() -> Path | None:
+    """Find the nearest workspace install setup above this source file."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / 'install' / 'setup.bash'
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def auto_source_environment() -> None:
+    """Re-execute this CLI once inside its ROS and workspace environments."""
+    if os.environ.get(AUTO_SOURCE_MARKER) == '1':
+        return
+    ros_setup = find_ros_setup()
+    workspace_setup = find_workspace_setup()
+    if ros_setup is None and workspace_setup is None:
+        return
+    command = (
+        'set -e\n'
+        'if [[ -n "$1" ]]; then source "$1"; fi\n'
+        'if [[ -n "$2" ]]; then source "$2"; fi\n'
+        f'export {AUTO_SOURCE_MARKER}=1\n'
+        'exec "$3" "$4" "${@:5}"'
+    )
+    os.execv(
+        '/bin/bash',
+        [
+            '/bin/bash',
+            '-c',
+            command,
+            'run_offline_evaluation',
+            str(ros_setup or ''),
+            str(workspace_setup or ''),
+            sys.executable,
+            str(Path(__file__).resolve()),
+            *sys.argv[1:],
+        ],
+    )
+
+
+if __name__ == '__main__':
+    auto_source_environment()
 
 try:
     import rclpy
@@ -51,8 +111,18 @@ try:
     from std_msgs.msg import Bool, String
 except ImportError as exc:
     ROS_IMPORT_ERROR: ImportError | None = exc
+    # Keep imports usable for configuration-only tests and provide a clear
+    # error if auto-sourcing could not locate a working ROS environment.
+    Node = object  # type: ignore[misc,assignment]
 else:
     ROS_IMPORT_ERROR = None
+
+try:
+    from anomaly_detection.response_handler import (
+        parse_llm_response as runtime_parse_llm_response,
+    )
+except ImportError:
+    from response_handler import parse_llm_response as runtime_parse_llm_response
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +142,7 @@ QUICK_RUN_OUTPUT_DIRECTORY = (
 
 
 NS_PER_SECOND = 1_000_000_000
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 10
 DEFAULT_DECISION_TOPIC = '/aad/decisions'
 DEFAULT_ALERT_TOPIC = '/aad/alerts'
 DEFAULT_LLM_CALLED_TOPIC = '/aad/llm_called'
@@ -95,6 +165,7 @@ SUMMARY_PATTERN = re.compile(
     r'\bsummary\s*=\s*(?P<value>.*)$',
     re.IGNORECASE | re.DOTALL,
 )
+ARTIFACT_FILE_PATTERN = re.compile(r'^api_artifact_(?P<timestamp>\d+)\.json$')
 
 
 class EvaluationError(RuntimeError):
@@ -108,14 +179,6 @@ class EvaluationInterrupted(RuntimeError):
         """Record the path containing results completed before interruption."""
         super().__init__(f'Partial report saved to {report_path}')
         self.report_path = report_path
-
-
-@dataclass(frozen=True)
-class TimestampEvidence:
-    """Integer timestamp with auditable provenance."""
-
-    timestamp_ns: int
-    source: str
 
 
 @dataclass(frozen=True)
@@ -155,9 +218,8 @@ class RunnerSettings:
     inference_drain_timeout_seconds: float
     post_playback_grace_seconds: float
     shutdown_timeout_seconds: float
-    context_lookback_seconds: float
     label_buffer_seconds: float
-    comparison_window_seconds: float
+    semantic_judge_enabled: bool
     continue_on_error: bool
     detector_command: tuple[str, ...]
     decision_topic: str
@@ -180,24 +242,24 @@ class FlowEdge:
 
 
 @dataclass
-class CollectedContext:
-    """A formatted input message observed during replay."""
-
-    received_monotonic_ns: int
-    source_timestamps_ns: list[int]
-    raw: str
-
-
-@dataclass
 class CollectorState:
     """Mutable callback state protected by a condition lock."""
 
-    decisions: list[dict[str, Any]] = field(default_factory=list)
-    alerts: list[dict[str, Any]] = field(default_factory=list)
+    decision_messages: list[str] = field(default_factory=list)
+    alert_count: int = 0
     llm_calls: list[dict[str, Any]] = field(default_factory=list)
-    pending_llm_calls_ns: deque[int] = field(default_factory=deque)
-    contexts: deque[CollectedContext] = field(default_factory=deque)
     last_activity_ns: int = field(default_factory=time.monotonic_ns)
+
+
+def decision_from_llm_response(response: Any) -> dict[str, Any]:
+    """Convert the detector's shared response type into a report mapping."""
+    decision = runtime_parse_llm_response(response)
+    return {
+        'anomaly': decision.anomaly,
+        'severity': decision.severity,
+        'action': decision.action,
+        'summary': decision.summary,
+    }
 
 
 def decimal_timestamp_ns(seconds: str, fraction: str | None) -> int:
@@ -745,6 +807,11 @@ def resolve_settings(
             ['ros2', 'run', 'anomaly_detection', 'anomaly_detection_node'],
         )
     )
+    semantic_judge_enabled = coerce_bool(
+        yaml_runner.get('semantic_judge_enabled', False)
+    )
+    if semantic_judge_enabled is None:
+        raise EvaluationError('runner.semantic_judge_enabled must be boolean.')
     return RunnerSettings(
         mode=mode,
         bags_path=bags_path,
@@ -780,21 +847,12 @@ def resolve_settings(
             'runner.shutdown_timeout_seconds',
             yaml_runner.get('shutdown_timeout_seconds', 20.0),
         ),
-        context_lookback_seconds=positive_number(
-            'runner.context_lookback_seconds',
-            yaml_runner.get('context_lookback_seconds', 30.0),
-            allow_zero=True,
-        ),
         label_buffer_seconds=positive_number(
             'runner.label_buffer_seconds',
             yaml_runner.get('label_buffer_seconds', 5.0),
             allow_zero=True,
         ),
-        comparison_window_seconds=positive_number(
-            'runner.comparison_window_seconds',
-            yaml_runner.get('comparison_window_seconds', 5.0),
-            allow_zero=True,
-        ),
+        semantic_judge_enabled=semantic_judge_enabled,
         continue_on_error=bool(yaml_runner.get('continue_on_error', True)),
         detector_command=detector_command,
         decision_topic=str(yaml_runner.get('decision_topic', DEFAULT_DECISION_TOPIC)),
@@ -1019,7 +1077,6 @@ class EvaluationCollector(Node):
         self.create_subscription(String, settings.decision_topic, self._decision, 50)
         self.create_subscription(String, settings.alert_topic, self._alert, 50)
         self.create_subscription(Bool, settings.llm_called_topic, self._llm_called, 50)
-        self.create_subscription(String, settings.formatted_topic, self._formatted, 100)
 
     def reset(self) -> None:
         """Clear all run-specific state."""
@@ -1034,90 +1091,34 @@ class EvaluationCollector(Node):
 
     def _llm_called(self, message: Bool) -> None:
         with self.condition:
-            now = self._touch()
-            self.state.pending_llm_calls_ns.append(now)
+            self._touch()
             self.state.llm_calls.append(
                 {
-                    'received_monotonic_ns': now,
                     'received_at_utc_ns': time.time_ns(),
                     'value': bool(message.data),
                 }
             )
             self.condition.notify_all()
 
-    def _formatted(self, message: String) -> None:
-        with self.condition:
-            now = self._touch()
-            self.state.contexts.append(
-                CollectedContext(now, embedded_timestamps(message.data), message.data)
-            )
-            cutoff = now - int(self.settings.context_lookback_seconds * NS_PER_SECOND)
-            while self.state.contexts and self.state.contexts[0].received_monotonic_ns < cutoff:
-                self.state.contexts.popleft()
-            self.condition.notify_all()
-
     def _decision(self, message: String) -> None:
         with self.condition:
-            now = self._touch()
-            parsed = parse_decision(message.data)
-            call_start = (
-                self.state.pending_llm_calls_ns.popleft()
-                if self.state.pending_llm_calls_ns
-                else None
-            )
-            cutoff = now - int(self.settings.context_lookback_seconds * NS_PER_SECOND)
-            contexts = [
-                item for item in self.state.contexts if item.received_monotonic_ns >= cutoff
-            ]
-            candidates = sorted(
-                {
-                    timestamp
-                    for context in contexts
-                    for timestamp in context.source_timestamps_ns
-                }
-            )
-            observations = [
-                {
-                    'source_timestamp_ns': timestamp,
-                    'observed_monotonic_ns': context.received_monotonic_ns,
-                }
-                for context in contexts
-                for timestamp in context.source_timestamps_ns
-            ]
-            parsed.update(
-                {
-                    'received_at_utc_ns': time.time_ns(),
-                    'received_monotonic_ns': now,
-                    'model_latency_seconds': (
-                        (now - call_start) / NS_PER_SECOND
-                        if call_start is not None
-                        else None
-                    ),
-                    'source_timestamp_candidates_ns': candidates,
-                    'source_replay_observations': observations,
-                    'source_attribution': (
-                        'recent_formatted_messages_heuristic' if candidates else None
-                    ),
-                    'context_messages': [item.raw for item in contexts],
-                }
-            )
-            self.state.decisions.append(parsed)
+            self._touch()
+            self.state.decision_messages.append(message.data)
             self.condition.notify_all()
 
-    def _alert(self, message: String) -> None:
+    def _alert(self, _message: String) -> None:
         with self.condition:
-            now = self._touch()
-            self.state.alerts.append(
-                {
-                    'raw': message.data,
-                    'received_at_utc_ns': time.time_ns(),
-                    'received_monotonic_ns': now,
-                }
-            )
+            self._touch()
+            self.state.alert_count += 1
             self.condition.notify_all()
 
-    def wait_for_drain(self, minimum_wait: float, timeout: float) -> bool:
-        """Wait for minimum observation time, no calls, and a short quiet period."""
+    def wait_for_drain(
+        self,
+        minimum_wait: float,
+        timeout: float,
+        artifact_directory: Path,
+    ) -> bool:
+        """Wait until every observed model call has produced an API artifact."""
         started = time.monotonic()
         deadline = started + timeout
         quiet_ns = int(0.5 * NS_PER_SECOND)
@@ -1126,7 +1127,11 @@ class EvaluationCollector(Node):
                 now = time.monotonic()
                 quiet = time.monotonic_ns() - self.state.last_activity_ns >= quiet_ns
                 waited = now - started >= minimum_wait
-                if waited and quiet and not self.state.pending_llm_calls_ns:
+                completed_calls = sum(
+                    1 for _ in artifact_directory.glob('api_artifact_*.json')
+                )
+                pending_calls = max(len(self.state.llm_calls) - completed_calls, 0)
+                if waited and quiet and pending_calls == 0:
                     return True
                 remaining = deadline - now
                 if remaining <= 0:
@@ -1155,11 +1160,9 @@ class EvaluationCollector(Node):
         """Copy collected state without exposing callback-owned containers."""
         with self.condition:
             return {
-                'decisions': copy.deepcopy(self.state.decisions),
-                'alerts': copy.deepcopy(self.state.alerts),
+                'decision_messages': list(self.state.decision_messages),
+                'alert_count': self.state.alert_count,
                 'llm_calls': copy.deepcopy(self.state.llm_calls),
-                'pending_llm_calls': len(self.state.pending_llm_calls_ns),
-                'formatted_message_count': len(self.state.contexts),
             }
 
 
@@ -1248,41 +1251,122 @@ def stop_process(process: subprocess.Popen[Any] | None, timeout: float) -> None:
         process.wait()
 
 
-def read_text_tail(path: Path, maximum_characters: int = 20_000) -> str:
-    """Keep logs useful internally without retaining unbounded output."""
-    try:
-        text = path.read_text(encoding='utf-8', errors='replace')
-    except OSError:
-        return ''
-    return text[-maximum_characters:]
-
-
 def read_artifacts(directory: Path) -> list[dict[str, Any]]:
     """Load generated API artifacts and retain malformed-file diagnostics."""
     artifacts: list[dict[str, Any]] = []
     for path in sorted(directory.glob('api_artifact_*.json')):
+        match = ARTIFACT_FILE_PATTERN.match(path.name)
+        file_timestamp = int(match.group('timestamp')) if match else None
         try:
             payload = json.loads(path.read_text(encoding='utf-8'))
             if not isinstance(payload, dict):
                 raise ValueError('artifact root is not an object')
             payload['_file'] = path.name
+            payload['_file_timestamp_ns'] = file_timestamp
             artifacts.append(payload)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            artifacts.append({'_file': path.name, '_parse_error': str(exc)})
+            artifacts.append(
+                {
+                    '_file': path.name,
+                    '_file_timestamp_ns': file_timestamp,
+                    '_parse_error': str(exc),
+                }
+            )
     return artifacts
 
 
-def enrich_decisions_with_artifacts(
-    decisions: list[dict[str, Any]], artifacts: list[dict[str, Any]]
-) -> list[str]:
-    """Attach artifact context to LLM-backed decisions in chronological order."""
+def artifact_timestamp_ns(artifact: dict[str, Any]) -> int | None:
+    """Return an artifact completion timestamp from content or filename."""
+    for key in ('timestamp_ns', '_file_timestamp_ns'):
+        value = artifact.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def match_artifacts_to_calls(
+    artifacts: list[dict[str, Any]], llm_calls: list[dict[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Match each artifact to the nearest preceding unmatched model call."""
+    unmatched = set(range(len(llm_calls)))
+    matches: dict[int, dict[str, Any]] = {}
+    artifact_order = sorted(
+        range(len(artifacts)),
+        key=lambda index: (
+            artifact_timestamp_ns(artifacts[index]) is None,
+            artifact_timestamp_ns(artifacts[index]) or index,
+        ),
+    )
+    for artifact_index in artifact_order:
+        if not unmatched:
+            break
+        artifact_time = artifact_timestamp_ns(artifacts[artifact_index])
+        preceding = [
+            call_index
+            for call_index in unmatched
+            if artifact_time is not None
+            and isinstance(llm_calls[call_index].get('received_at_utc_ns'), int)
+            and llm_calls[call_index]['received_at_utc_ns'] <= artifact_time
+        ]
+        if preceding:
+            call_index = max(
+                preceding,
+                key=lambda index: llm_calls[index]['received_at_utc_ns'],
+            )
+        else:
+            call_index = min(
+                unmatched,
+                key=lambda index: (
+                    llm_calls[index].get('received_at_utc_ns') is None,
+                    llm_calls[index].get('received_at_utc_ns') or index,
+                ),
+            )
+        unmatched.remove(call_index)
+        matches[artifact_index] = llm_calls[call_index]
+    return matches
+
+
+def llm_decisions_from_artifacts(
+    artifacts: list[dict[str, Any]], llm_calls: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build exactly one report decision for each nonempty model response."""
     warnings: list[str] = []
-    usable = [artifact for artifact in artifacts if '_parse_error' not in artifact]
-    llm_decisions = [
-        decision for decision in decisions if decision.get('model_latency_seconds') is not None
-    ]
-    for decision, artifact in zip(llm_decisions, usable):
+    call_matches = match_artifacts_to_calls(artifacts, llm_calls)
+    decisions: list[dict[str, Any]] = []
+    for index, artifact in enumerate(artifacts):
+        if '_parse_error' in artifact:
+            warnings.append(
+                f"Could not parse LLM artifact {artifact.get('_file', index + 1)}: "
+                f"{artifact['_parse_error']}"
+            )
+            continue
+        response = artifact.get('api_response')
+        if not isinstance(response, str) or not response.strip():
+            warnings.append(
+                f"LLM artifact {artifact.get('_file', index + 1)} contains no model "
+                'response; it was excluded from the LLM-decision table.'
+            )
+            continue
+        decision = decision_from_llm_response(response)
         contexts = artifact.get('cached_data', [])
+        context_messages = (
+            [str(context) for context in contexts]
+            if isinstance(contexts, list)
+            else []
+        )
+        error_messages = [
+            context
+            for context in context_messages
+            if re.search(r'\bimportance\s*=\s*ERROR\b', context, re.IGNORECASE)
+        ]
+        decision.update(
+            {
+                'artifact_api_response': response,
+                'error_context_messages': error_messages,
+                'source_timestamp_candidates_ns': [],
+                'model_latency_seconds': None,
+            }
+        )
         if isinstance(contexts, list):
             candidates = sorted(
                 {
@@ -1293,18 +1377,53 @@ def enrich_decisions_with_artifacts(
             )
             if candidates:
                 decision['source_timestamp_candidates_ns'] = candidates
-                decision['source_attribution'] = 'api_artifact.cached_data'
-        timestamp = artifact.get('timestamp_ns')
-        if isinstance(timestamp, int):
-            decision['artifact_return_timestamp_ns'] = timestamp
-        decision['artifact_id'] = artifact.get('artifact_id')
-        decision['artifact_api_response'] = artifact.get('api_response')
-    if len(usable) != len(llm_decisions):
+        timestamp = artifact_timestamp_ns(artifact)
+        if timestamp is not None:
+            matched_call = call_matches.get(index)
+            if matched_call is not None:
+                call_timestamp = matched_call.get('received_at_utc_ns')
+                if isinstance(call_timestamp, int) and timestamp >= call_timestamp:
+                    decision['model_latency_seconds'] = (
+                        timestamp - call_timestamp
+                    ) / NS_PER_SECOND
+        decisions.append(decision)
+    if len(artifacts) != len(llm_calls):
         warnings.append(
-            'Artifact/LLM-decision counts differ; unmatched records were preserved '
-            f'(artifacts={len(usable)}, decisions={len(llm_decisions)}).'
+            'Artifact-file/LLM-call counts differ; only captured model responses '
+            f'were reported (artifacts={len(artifacts)}, calls={len(llm_calls)}).'
         )
-    return warnings
+    return decisions, warnings
+
+
+def decision_signature(decision: dict[str, Any]) -> tuple[Any, ...]:
+    """Return stable fields used to identify a published model decision."""
+    return (
+        decision.get('anomaly'),
+        str(decision.get('severity') or '').strip().lower(),
+        str(decision.get('action') or '').strip().lower(),
+        ' '.join(str(decision.get('summary') or '').split()),
+    )
+
+
+def immediate_decisions_from_topic(
+    messages: list[str], llm_decisions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Exclude artifact-backed model decisions from published stop decisions."""
+    remaining_llm = Counter(decision_signature(item) for item in llm_decisions)
+    immediate: list[dict[str, Any]] = []
+    for message in messages:
+        parsed = parse_decision(message)
+        signature = decision_signature(parsed)
+        if remaining_llm[signature]:
+            remaining_llm[signature] -= 1
+            continue
+        if (
+            parsed.get('anomaly') is True
+            and parsed.get('severity') == 'high'
+            and parsed.get('action') == 'stop_cart'
+        ):
+            immediate.append(parsed)
+    return immediate
 
 
 def latency_summary(values: Iterable[float]) -> dict[str, Any]:
@@ -1485,44 +1604,31 @@ def execution_metrics(snapshot: dict[str, Any], elapsed_seconds: float) -> dict[
     positive_count = sum(decision.get('anomaly') is True for decision in decisions)
     negative_count = sum(decision.get('anomaly') is False for decision in decisions)
     unparseable = len(decisions) - positive_count - negative_count
+    severities = Counter(
+        decision.get('severity')
+        for decision in decisions
+        if decision.get('severity')
+    )
+    actions = Counter(
+        decision.get('action')
+        for decision in decisions
+        if decision.get('action')
+    )
     return {
         'elapsed_seconds': elapsed_seconds,
         'model_response_latency': latency_summary(latencies),
         'behavior': {
             'decision_count': len(decisions),
+            'immediate_safety_decisions': len(
+                snapshot.get('immediate_decisions', [])
+            ),
             'positive_decisions': positive_count,
             'negative_decisions': negative_count,
             'unparseable_decisions': unparseable,
             'positive_decision_rate': safe_ratio(positive_count, len(decisions)),
-            'alert_count': len(snapshot['alerts']),
-            'severity_distribution': dict(
-                sorted(
-                    {
-                        severity: sum(
-                            decision.get('severity') == severity for decision in decisions
-                        )
-                        for severity in {
-                            decision.get('severity')
-                            for decision in decisions
-                            if decision.get('severity')
-                        }
-                    }.items()
-                )
-            ),
-            'action_distribution': dict(
-                sorted(
-                    {
-                        action: sum(
-                            decision.get('action') == action for decision in decisions
-                        )
-                        for action in {
-                            decision.get('action')
-                            for decision in decisions
-                            if decision.get('action')
-                        }
-                    }.items()
-                )
-            ),
+            'alert_count': snapshot['alert_count'],
+            'severity_distribution': dict(sorted(severities.items())),
+            'action_distribution': dict(sorted(actions.items())),
         },
         'reliability': {
             'llm_calls': len(snapshot['llm_calls']),
@@ -1560,7 +1666,6 @@ def execute_one(
         'trial': trial,
         'status': 'starting',
         'started_at_utc': started_at.isoformat(),
-        'bag_topics': bag.topics,
         'bag_duration_seconds': bag.duration_seconds,
         'warnings': list(label_warnings),
         'errors': [],
@@ -1643,6 +1748,11 @@ def execute_one(
                 str(bag.path),
                 '--rate',
                 str(settings.playback_rate),
+                '--exclude-topics',
+                settings.decision_topic,
+                settings.alert_topic,
+                settings.llm_called_topic,
+                settings.formatted_topic,
             ]
             with player_log.open('w', encoding='utf-8') as player_stream:
                 player_process = subprocess.Popen(
@@ -1665,6 +1775,7 @@ def execute_one(
             drained = collector.wait_for_drain(
                 settings.post_playback_grace_seconds,
                 settings.inference_drain_timeout_seconds,
+                artifact_directory,
             )
             if not drained:
                 result['warnings'].append(
@@ -1672,8 +1783,18 @@ def execute_one(
                 )
             snapshot = collector.snapshot()
             artifacts = read_artifacts(artifact_directory)
-            result['warnings'].extend(
-                enrich_decisions_with_artifacts(snapshot['decisions'], artifacts)
+            llm_decisions, artifact_warnings = llm_decisions_from_artifacts(
+                artifacts,
+                snapshot['llm_calls'],
+            )
+            result['warnings'].extend(artifact_warnings)
+            snapshot['immediate_decisions'] = immediate_decisions_from_topic(
+                snapshot['decision_messages'], llm_decisions
+            )
+            snapshot['decisions'] = llm_decisions
+            snapshot['pending_llm_calls'] = max(
+                len(snapshot['llm_calls']) - len(artifacts),
+                0,
             )
             elapsed = time.monotonic() - start_monotonic
             result.update(
@@ -1682,9 +1803,6 @@ def execute_one(
                     'finished_at_utc': datetime.now(timezone.utc).isoformat(),
                     'metrics': execution_metrics(snapshot, elapsed),
                     'decisions': snapshot['decisions'],
-                    'alerts': snapshot['alerts'],
-                    'llm_calls': snapshot['llm_calls'],
-                    'artifacts': artifacts,
                 }
             )
             if settings.mode == 'human-labeled':
@@ -1707,8 +1825,6 @@ def execute_one(
         finally:
             stop_process(player_process, settings.shutdown_timeout_seconds)
             stop_process(detector_process, settings.shutdown_timeout_seconds)
-            result['detector_log_tail'] = read_text_tail(detector_log)
-            result['player_log_tail'] = read_text_tail(player_log)
     return result
 
 
@@ -1733,27 +1849,34 @@ def aggregate_executions(
     positive = sum(decision.get('anomaly') is True for decision in decisions)
     negative = sum(decision.get('anomaly') is False for decision in decisions)
     unparseable = len(decisions) - positive - negative
-    severity_distribution = {
-        severity: sum(decision.get('severity') == severity for decision in decisions)
-        for severity in sorted(
-            {
+    severity_distribution = dict(
+        sorted(
+            Counter(
                 decision.get('severity')
                 for decision in decisions
                 if decision.get('severity')
-            }
+            ).items()
         )
-    }
-    action_distribution = {
-        action: sum(decision.get('action') == action for decision in decisions)
-        for action in sorted(
-            {
+    )
+    action_distribution = dict(
+        sorted(
+            Counter(
                 decision.get('action')
                 for decision in decisions
                 if decision.get('action')
-            }
+            ).items()
         )
-    }
-    calls = sum(len(item.get('llm_calls', [])) for item in completed)
+    )
+    calls = sum(
+        item.get('metrics', {}).get('reliability', {}).get('llm_calls', 0)
+        for item in completed
+    )
+    immediate_safety_decisions = sum(
+        item.get('metrics', {})
+        .get('behavior', {})
+        .get('immediate_safety_decisions', 0)
+        for item in completed
+    )
     result: dict[str, Any] = {
         'executions_expected': len(executions) if expected is None else expected,
         'executions_completed': len(completed),
@@ -1761,11 +1884,15 @@ def aggregate_executions(
         'executions_invalid': sum(item['status'] == 'invalid_bag' for item in executions),
         'model_response_latency': latency_summary(model_latencies),
         'behavior': {
+            'immediate_safety_decisions': immediate_safety_decisions,
             'positive_decisions': positive,
             'negative_decisions': negative,
             'unparseable_decisions': unparseable,
             'positive_decision_rate': safe_ratio(positive, positive + negative),
-            'alerts': sum(len(item.get('alerts', [])) for item in completed),
+            'alerts': sum(
+                item.get('metrics', {}).get('behavior', {}).get('alert_count', 0)
+                for item in completed
+            ),
             'severity_distribution': severity_distribution,
             'action_distribution': action_distribution,
         },
@@ -1840,8 +1967,213 @@ def numeric_summary(values: Iterable[Any]) -> dict[str, Any]:
     }
 
 
+def normalized_api_response(value: Any) -> str | None:
+    """Normalize an API response so formatting alone does not count as a change."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    payload = parse_json_object(value)
+    if payload is not None:
+        return json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    return ' '.join(value.split())
+
+
+def api_responses_by_source(execution: dict[str, Any]) -> dict[tuple[int, int], str]:
+    """Index captured API responses by their latest replay-source timestamp."""
+    records: dict[tuple[int, int], str] = {}
+    occurrences: dict[int, int] = {}
+    for decision in execution.get('decisions', []):
+        if not isinstance(decision, dict):
+            continue
+        response = normalized_api_response(decision.get('artifact_api_response'))
+        timestamps = decision.get('source_timestamp_candidates_ns', [])
+        source_timestamps = [
+            timestamp
+            for timestamp in timestamps
+            if isinstance(timestamp, int) and not isinstance(timestamp, bool)
+        ]
+        if response is None or not source_timestamps:
+            continue
+        source_timestamp = max(source_timestamps)
+        occurrence = occurrences.get(source_timestamp, 0)
+        occurrences[source_timestamp] = occurrence + 1
+        records[(source_timestamp, occurrence)] = response
+    return records
+
+
+def ollama_response_judge(
+    configuration: dict[str, Any],
+) -> Callable[[str, str], dict[str, Any]] | None:
+    """Return an LLM judge for semantic API-response comparisons."""
+    llm = configuration.get('llm', {})
+    if not isinstance(llm, dict) or not llm.get('local'):
+        return None
+    model = str(llm.get('model', '')).strip()
+    host = str(llm.get('ollama_host', 'http://127.0.0.1:11434')).rstrip('/')
+    if not model or not host:
+        return None
+    try:
+        timeout = max(60.0, float(llm.get('timeout_seconds', 60.0)))
+    except (TypeError, ValueError):
+        timeout = 60.0
+    cache: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def judge(left: str, right: str) -> dict[str, Any]:
+        cache_key = tuple(sorted((left, right)))
+        if cache_key in cache:
+            return dict(cache[cache_key])
+        prompt = (
+            'Compare these two anomaly-detection API responses for the same '
+            'replayed event. Decide whether they are materially consistent. '
+            'Treat wording-only differences as consistent. Mark them inconsistent '
+            'when their anomaly decision, severity, action, or stated evidence '
+            'materially conflicts. Return only JSON with this shape: '
+            '{"consistent": true or false, "rationale": "brief reason"}.\n\n'
+            f'Response A:\n{left[:12_000]}\n\nResponse B:\n{right[:12_000]}'
+        )
+        payload = {
+            'model': model,
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': (
+                        'You are a precise evaluator of anomaly-detection '
+                        'responses. Follow the requested JSON schema exactly.'
+                    ),
+                },
+                {'role': 'user', 'content': prompt},
+            ],
+            'stream': False,
+            'format': 'json',
+            'think': False,
+            'keep_alive': '10m',
+            'options': {'temperature': 0, 'num_predict': 96},
+        }
+        request = Request(
+            f'{host}/api/chat',
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                body = json.loads(response.read().decode('utf-8'))
+        except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+            result = {'consistent': None, 'error': f'{type(exc).__name__}: {exc}'}
+            cache[cache_key] = result
+            return dict(result)
+
+        message = body.get('message', {}) if isinstance(body, dict) else {}
+        content = message.get('content') if isinstance(message, dict) else None
+        verdict = parse_json_object(str(content or ''))
+        consistent = coerce_bool(verdict.get('consistent')) if verdict else None
+        if consistent is None:
+            result = {
+                'consistent': None,
+                'error': 'Judge returned no boolean "consistent" field.',
+            }
+            cache[cache_key] = result
+            return dict(result)
+        rationale = str(verdict.get('rationale', '')).strip()
+        result = {'consistent': consistent, 'rationale': rationale}
+        cache[cache_key] = result
+        return dict(result)
+
+    return judge
+
+
+def api_response_comparison(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    response_judge: Callable[[str, str], dict[str, Any]] | None = None,
+    response_cache: dict[int, dict[tuple[int, int], str]] | None = None,
+) -> dict[str, Any]:
+    """Use an LLM to compare API responses for matching replay sources."""
+    if response_cache is None:
+        left_records = api_responses_by_source(left)
+        right_records = api_responses_by_source(right)
+    else:
+        left_key = id(left)
+        right_key = id(right)
+        if left_key not in response_cache:
+            response_cache[left_key] = api_responses_by_source(left)
+        if right_key not in response_cache:
+            response_cache[right_key] = api_responses_by_source(right)
+        left_records = response_cache[left_key]
+        right_records = response_cache[right_key]
+    shared = sorted(set(left_records).intersection(right_records))
+    judgments = (
+        [
+            {
+                'source_timestamp_ns': key[0],
+                'occurrence': key[1],
+                **response_judge(left_records[key], right_records[key]),
+            }
+            for key in shared
+        ]
+        if response_judge is not None
+        else []
+    )
+    judged = [item for item in judgments if isinstance(item.get('consistent'), bool)]
+    consistent = sum(item['consistent'] is True for item in judged)
+    return {
+        'matched_responses': len(shared),
+        'llm_judged_responses': len(judged),
+        'consistent_responses': consistent,
+        'semantic_response_agreement': safe_ratio(consistent, len(judged)),
+        'judge_errors': len(judgments) - len(judged),
+        'left_only_responses': len(set(left_records).difference(right_records)),
+        'right_only_responses': len(set(right_records).difference(left_records)),
+        'judgments': judgments,
+    }
+
+
+def api_response_repeatability(
+    executions: Sequence[dict[str, Any]],
+    response_judge: Callable[[str, str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Use an LLM to measure response consistency across repeated replays."""
+    by_bag: dict[str, list[dict[tuple[int, int], str]]] = {}
+    for execution in executions:
+        by_bag.setdefault(execution['bag'], []).append(api_responses_by_source(execution))
+    rows = []
+    for bag, record_sets in sorted(by_bag.items()):
+        responses_by_source: dict[tuple[int, int], list[str]] = {}
+        for records in record_sets:
+            for source, response in records.items():
+                responses_by_source.setdefault(source, []).append(response)
+        response_pairs = [
+            (responses[0], response)
+            for responses in responses_by_source.values()
+            for response in responses[1:]
+        ]
+        comparisons = (
+            [response_judge(left, right) for left, right in response_pairs]
+            if response_judge is not None
+            else []
+        )
+        judged = [
+            comparison
+            for comparison in comparisons
+            if isinstance(comparison.get('consistent'), bool)
+        ]
+        consistent = sum(comparison['consistent'] is True for comparison in judged)
+        rows.append(
+            {
+                'bag': bag,
+                'completed_trials': len(record_sets),
+                'comparable_responses': len(response_pairs),
+                'llm_judged_responses': len(judged),
+                'consistent_responses': consistent,
+                'semantic_response_agreement': safe_ratio(consistent, len(judged)),
+                'judge_errors': len(comparisons) - len(judged),
+            }
+        )
+    return rows
+
+
 def repeatability_summary(
     executions: Sequence[dict[str, Any]],
+    response_judge: Callable[[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Measure per-run variation and bag-level outcome consistency."""
     completed = [item for item in executions if item['status'].startswith('completed')]
@@ -1898,14 +2230,19 @@ def repeatability_summary(
         'completed_executions': len(completed),
         'metric_variability': summaries,
         'bag_consistency': bag_rows,
+        'api_response_consistency': api_response_repeatability(
+            completed, response_judge
+        ),
     }
 
 
 def configuration_comparisons(
-    grouped: dict[str, list[dict[str, Any]]]
+    grouped: dict[str, list[dict[str, Any]]],
+    response_judge: Callable[[str, str], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Compare bag-level positive behavior between every experiment pair."""
     comparisons: list[dict[str, Any]] = []
+    response_cache: dict[int, dict[tuple[int, int], str]] = {}
     by_name_and_key: dict[str, dict[tuple[str, int], dict[str, Any]]] = {}
     for name, executions in grouped.items():
         by_name_and_key[name] = {
@@ -1928,6 +2265,9 @@ def configuration_comparisons(
             )
             agrees = left_positive == right_positive
             agreements += agrees
+            response_comparison = api_response_comparison(
+                left[key], right[key], response_judge, response_cache
+            )
             rows.append(
                 {
                     'bag': key[0],
@@ -1943,6 +2283,7 @@ def configuration_comparisons(
                         decision.get('anomaly') is True
                         for decision in right[key]['decisions']
                     ),
+                    'api_response_comparison': response_comparison,
                 }
             )
         comparisons.append(
@@ -1961,10 +2302,10 @@ def configuration_comparisons(
 def reserve_report_path(directory: Path, started: datetime) -> Path:
     """Atomically reserve a timestamped report path without overwriting."""
     directory.mkdir(parents=True, exist_ok=True)
-    stem = f'offline_evaluation_{started:%Y%m%d_%H%M%S}'
+    stem = f'{started:%Y-%m-%d_%H-%M-%S}'
     suffix = 0
     while True:
-        postfix = '' if suffix == 0 else f'_{suffix}'
+        postfix = '' if suffix == 0 else f'-{suffix + 1}'
         candidate = directory / f'{stem}{postfix}.md'
         try:
             # Exclusive creation prevents concurrent evaluators started in the
@@ -2068,11 +2409,13 @@ def metric_rows(metrics: Any) -> list[tuple[str, Any]]:
             ('Median response latency', seconds_text(latency.get('median_seconds'))),
             ('Minimum response latency', seconds_text(latency.get('minimum_seconds'))),
             ('Maximum response latency', seconds_text(latency.get('maximum_seconds'))),
-            ('P90 response latency', seconds_text(latency.get('p90_seconds'))),
-            ('P95 response latency', seconds_text(latency.get('p95_seconds'))),
-            ('Positive decisions', behavior.get('positive_decisions', 0)),
-            ('Negative decisions', behavior.get('negative_decisions', 0)),
-            ('Unparseable decisions', behavior.get('unparseable_decisions', 0)),
+            (
+                'Immediate safety decisions (excluded from LLM table)',
+                behavior.get('immediate_safety_decisions', 0),
+            ),
+            ('Positive LLM decisions', behavior.get('positive_decisions', 0)),
+            ('Negative LLM decisions', behavior.get('negative_decisions', 0)),
+            ('Unparseable LLM decisions', behavior.get('unparseable_decisions', 0)),
             (
                 'Positive decision rate',
                 ratio_text(behavior.get('positive_decision_rate')),
@@ -2231,15 +2574,20 @@ def append_report_overview(lines: list[str], report: dict[str, Any]) -> None:
             '',
             '### Reading this report',
             '',
-            '- A **positive decision** is a final decision marked `Anomaly: Yes`. '
+            '- A **positive decision** is an LLM decision marked `Anomaly: Yes`. '
             'In unlabeled mode, it is not a verified anomaly.',
             '- **Model latency** is reported only when a measured model response '
             'was available. An em dash (`—`) means no latency was recorded for '
-            'that final decision.',
+            'that LLM decision.',
+            '- Immediate safety decisions are counted separately and omitted from '
+            'the LLM-decision table because they have no original model response.',
+            '- **LLM-judged API-response consistency** compares paired original '
+            'responses for the same replay source. It permits wording changes but '
+            'flags material conflicts in the decision, severity, action, or evidence.',
             '- Aggregate severity and action distributions combine all completed '
             'replays. `None` means no completed decision supplied a value for that '
             'field.',
-            '- **Unparseable decisions** are final decisions lacking a Yes/No '
+            '- **Unparseable decisions** are LLM decisions lacking a Yes/No '
             'anomaly value. A safe fallback after malformed model output can still '
             'be a parseable No decision, so it may appear in the details without '
             'increasing this count.',
@@ -2340,6 +2688,7 @@ def render_report_markdown(report: dict[str, Any]) -> str:
         ('Started (UTC)', experiment['started_at_utc']),
         ('Finished (UTC)', experiment.get('finished_at_utc')),
         ('Playback rate', f'{experiment["playback_rate"]}×'),
+        ('Semantic LLM judging', experiment.get('semantic_judge_enabled', False)),
         ('Executions', execution_count),
         ('Configuration file', experiment['evaluation_yaml']),
         ('Recordings location', experiment['recordings_folder']),
@@ -2420,6 +2769,65 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                 comparison_rows,
             )
         )
+        response_rows = [
+            (
+                Path(item['bag']).name,
+                item['trial'],
+                item.get('api_response_comparison', {}).get('matched_responses', 0),
+                item.get('api_response_comparison', {}).get(
+                    'llm_judged_responses', 0
+                ),
+                item.get('api_response_comparison', {}).get(
+                    'consistent_responses', 0
+                ),
+                ratio_text(
+                    item.get('api_response_comparison', {}).get(
+                        'semantic_response_agreement'
+                    )
+                ),
+                item.get('api_response_comparison', {}).get('judge_errors', 0),
+                item.get('api_response_comparison', {}).get('left_only_responses', 0),
+                item.get('api_response_comparison', {}).get('right_only_responses', 0),
+            )
+            for item in comparison.get('executions', [])
+        ]
+        lines.extend(['', '**LLM-judged API-response consistency**', ''])
+        lines.extend(
+            markdown_table(
+                (
+                    'Bag',
+                    'Trial',
+                    'Matched responses',
+                    'LLM judgments',
+                    'Consistent responses',
+                    'Semantic agreement',
+                    'Judge errors',
+                    'Left only',
+                    'Right only',
+                ),
+                response_rows,
+            )
+        )
+        judgment_rows = [
+            (
+                Path(item['bag']).name,
+                item['trial'],
+                judgment.get('source_timestamp_ns'),
+                judgment.get('consistent'),
+                judgment.get('rationale') or judgment.get('error'),
+            )
+            for item in comparison.get('executions', [])
+            for judgment in item.get('api_response_comparison', {}).get('judgments', [])
+            if isinstance(judgment, dict)
+        ]
+        if judgment_rows:
+            lines.extend(['', '**LLM response judgments**', ''])
+            lines.extend(
+                markdown_table(
+                    ('Bag', 'Trial', 'Source timestamp', 'Consistent', 'Rationale'),
+                    judgment_rows,
+                )
+            )
 
     lines.extend(['', '## Configuration details'])
     for configuration in report['configurations']:
@@ -2459,11 +2867,15 @@ def render_report_markdown(report: dict[str, Any]) -> str:
             ),
             ('Model', llm.get('model')),
             ('Local model', llm.get('local')),
+            ('Ollama host', llm.get('ollama_host')),
+            ('Model timeout', seconds_text(llm.get('timeout_seconds'))),
             ('Model token context', llm.get('num_ctx')),
+            ('Maximum output tokens', llm.get('num_predict')),
             ('Vision enabled', llm.get('vision_enabled')),
             ('Image context enabled', llm.get('image_context_enabled')),
             ('Routine image frames', llm.get('image_context_max_frames')),
             ('Maximum image frames', llm.get('image_max_frames')),
+            ('Image JPEG quality', llm.get('image_jpeg_quality')),
         ]
         lines.extend(markdown_table(('Parameter', 'Value'), parameter_rows))
         lines.extend(['', '#### Aggregate results', ''])
@@ -2535,6 +2947,35 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                     consistency_rows,
                 )
             )
+        response_consistency = repeatability.get('api_response_consistency', [])
+        if response_consistency:
+            response_consistency_rows = [
+                (
+                    Path(item['bag']).name,
+                    item.get('completed_trials', 0),
+                    item.get('comparable_responses', 0),
+                    item.get('llm_judged_responses', 0),
+                    item.get('consistent_responses', 0),
+                    ratio_text(item.get('semantic_response_agreement')),
+                    item.get('judge_errors', 0),
+                )
+                for item in response_consistency
+            ]
+            lines.extend(['', '**LLM-judged API-response consistency across trials**', ''])
+            lines.extend(
+                markdown_table(
+                    (
+                        'Bag',
+                        'Completed trials',
+                        'Comparable responses',
+                        'LLM judgments',
+                        'Consistent responses',
+                        'Semantic agreement',
+                        'Judge errors',
+                    ),
+                    response_consistency_rows,
+                )
+            )
         for execution in configuration['executions']:
             bag_name = Path(execution['bag']).name
             lines.extend(
@@ -2570,12 +3011,21 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                         decision.get('severity'),
                         decision.get('action'),
                         seconds_text(decision.get('model_latency_seconds')),
+                        '<br>'.join(
+                            f'{message_index}. {message}'
+                            for message_index, message in enumerate(
+                                decision.get('error_context_messages', []),
+                                start=1,
+                            )
+                        )
+                        or None,
                         decision.get('summary'),
+                        decision.get('artifact_api_response'),
                     )
                     for index, decision in enumerate(decisions, start=1)
                     if isinstance(decision, dict)
                 ]
-                lines.extend(['', '**Final decisions**', ''])
+                lines.extend(['', '**LLM decisions**', ''])
                 lines.extend(
                     markdown_table(
                         (
@@ -2584,7 +3034,9 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                             'Severity',
                             'Action',
                             'Model latency',
+                            'Error messages analyzed',
                             'Summary',
+                            'Original LLM response',
                         ),
                         decision_rows,
                     )
@@ -2607,7 +3059,7 @@ def render_report_markdown(report: dict[str, Any]) -> str:
 
 
 def write_report(report: dict[str, Any], path: Path) -> None:
-    """Atomically replace a report so interruption cannot corrupt a checkpoint."""
+    """Atomically write the final or interrupted-run report."""
     temporary_path: Path | None = None
     try:
         rendered = render_report_markdown(report)
@@ -2637,11 +3089,15 @@ def evaluated_parameters(configuration: dict[str, Any]) -> dict[str, Any]:
         'model_provider',
         'model',
         'local',
+        'ollama_host',
+        'timeout_seconds',
         'vision_enabled',
         'image_context_enabled',
         'image_context_max_frames',
         'image_max_frames',
         'num_ctx',
+        'num_predict',
+        'image_jpeg_quality',
     )
     return {
         'api_frequency_seconds': configuration.get('api_frequency_seconds'),
@@ -2661,7 +3117,9 @@ def compact_decision(decision: dict[str, Any]) -> dict[str, Any]:
         'severity': decision.get('severity'),
         'action': decision.get('action'),
         'summary': decision.get('summary'),
+        'artifact_api_response': decision.get('artifact_api_response'),
         'model_latency_seconds': decision.get('model_latency_seconds'),
+        'error_context_messages': decision.get('error_context_messages', []),
     }
 
 
@@ -2760,6 +3218,15 @@ def build_report(
     """Build a report for a running, completed, aborted, or interrupted matrix."""
     configuration_reports: list[dict[str, Any]] = []
     all_executions: list[dict[str, Any]] = []
+    response_judge = (
+        ollama_response_judge(experiments[0].aad_config)
+        if (
+            settings.semantic_judge_enabled
+            and not settings.dry_run
+            and experiments
+        )
+        else None
+    )
     expected_per_experiment = {
         experiment.name: len(bags) * experiment.trials
         for experiment in experiments
@@ -2780,7 +3247,7 @@ def build_report(
                     settings.mode,
                     expected_per_experiment[experiment.name],
                 ),
-                'repeatability': repeatability_summary(executions),
+                'repeatability': repeatability_summary(executions, response_judge),
                 'executions': [
                     compact_execution(execution) for execution in executions
                 ],
@@ -2807,6 +3274,7 @@ def build_report(
             ),
             'recordings_folder': str(settings.bags_path),
             'playback_rate': settings.playback_rate,
+            'semantic_judge_enabled': settings.semantic_judge_enabled,
             'source_revision': revision,
             'expected_executions': expected,
             'attempted_executions': len(all_executions),
@@ -2822,7 +3290,9 @@ def build_report(
         'overall': aggregate_executions(
             all_executions, settings.mode, expected
         ),
-        'configuration_comparisons': configuration_comparisons(grouped),
+        'configuration_comparisons': configuration_comparisons(
+            grouped, response_judge
+        ),
         'configurations': configuration_reports,
     }
 
@@ -2849,8 +3319,8 @@ def example_configuration() -> dict[str, Any]:
             'post_playback_grace_seconds': 2.0,
             'inference_drain_timeout_seconds': 60.0,
             'shutdown_timeout_seconds': 20.0,
-            'context_lookback_seconds': 30.0,
             'label_buffer_seconds': 5.0,
+            'semantic_judge_enabled': False,
             'human_label_topic': None,
         },
         'base_config': str(base_config),
@@ -2961,7 +3431,6 @@ def run(args: argparse.Namespace) -> Path | None:
     )
     started = datetime.now(timezone.utc)
     revision = source_revision()
-    report_path = reserve_report_path(settings.output_directory, started)
     grouped: dict[str, list[dict[str, Any]]] = {
         experiment.name: [] for experiment in experiments
     }
@@ -2988,25 +3457,6 @@ def run(args: argparse.Namespace) -> Path | None:
     aborted = False
     interrupted = False
 
-    def save_checkpoint(run_status: str) -> dict[str, Any]:
-        """Persist every execution completed up to this point."""
-        report = build_report(
-            settings=settings,
-            config_path=config_path,
-            bags=bags,
-            experiments=experiments,
-            grouped=grouped,
-            started=started,
-            expected=expected,
-            revision=revision,
-            run_status=run_status,
-        )
-        write_report(report, report_path)
-        return report
-
-    # Write valid JSON before the first replay. Subsequent checkpoints replace
-    # the same file atomically, so Ctrl+C leaves the last complete checkpoint.
-    save_checkpoint('running')
     try:
         for experiment in experiments:
             print(f'Configuration: {experiment.name} ({experiment.config_hash[:12]})')
@@ -3038,7 +3488,6 @@ def run(args: argparse.Namespace) -> Path | None:
                             label_warnings,
                         )
                     grouped[experiment.name].append(execution)
-                    save_checkpoint('running')
                     if execution['status'] in {'failed', 'invalid_bag'}:
                         print(f"    {execution['status']}: {execution['errors']}")
                         if not settings.continue_on_error:
@@ -3065,7 +3514,19 @@ def run(args: argparse.Namespace) -> Path | None:
         run_status = 'aborted'
     else:
         run_status = 'completed'
-    report = save_checkpoint(run_status)
+    report = build_report(
+        settings=settings,
+        config_path=config_path,
+        bags=bags,
+        experiments=experiments,
+        grouped=grouped,
+        started=started,
+        expected=expected,
+        revision=revision,
+        run_status=run_status,
+    )
+    report_path = reserve_report_path(settings.output_directory, started)
+    write_report(report, report_path)
     all_executions = [
         execution
         for experiment in experiments

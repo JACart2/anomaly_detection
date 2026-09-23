@@ -1,3 +1,5 @@
 __pycache__/
 .env
 logs/*
+system_evaluation/bags/
+system_evaluation/results/

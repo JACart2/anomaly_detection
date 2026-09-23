@@ -189,7 +189,11 @@ def encode_image(
 class LLMClient:
     """Contact a remote LiteLLM model or a local Ollama model."""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(
+        self,
+        config_path: Optional[str] = None,
+        ollama_host: Optional[str] = None,
+    ):
         """Initialize model, image, and inference settings from YAML."""
         self.provider = 'openai'
         self.provider_profile = 'openai'
@@ -249,7 +253,7 @@ class LLMClient:
         if self.api_base is None:
             self.api_base = os.getenv(f'{self.provider.upper()}_API_BASE', None)
         self.ollama_host = str(
-            llm_cfg.get('ollama_host', 'http://localhost:11434')
+            ollama_host or llm_cfg.get('ollama_host', 'http://localhost:11434')
         ).rstrip('/')
 
         ollama_options = {}
