@@ -39,10 +39,36 @@ Provides utility nodes such as: `fake_camera_data` and `lidar_test_node`. Both p
 ### ./scripts
 Standalone utility scripts that operate outside the ROS2 graph (not built/installed as part of any package).
 
-`extract_anomaly_bag.py` reads a recorded `.mcap` bag of `AnomalyMsg` records and writes a self-contained report: `messages.json`, `messages.csv`, `summary.json`, extracted images under `images/`, and a searchable/filterable `index.html`. Useful for reviewing a run's full anomaly log context, including embedded camera frames, without replaying the bag. Run with:
+`extract_anomaly_bag.py` reads a recorded `.mcap` bag of `AnomalyMsg` records and writes a self-contained report: `messages.json`, `messages.csv`, `summary.json`, extracted images under `images/`, and a searchable/filterable `index.html`. The HTML report also supports bag metadata, per-message labels, time-range labels, browser autosave, and JSON annotation import/export. It works locally without a server. Run with:
 ```
 python3 scripts/extract_anomaly_bag.py path/to/bag.mcap [-o output_dir]
 ```
+
+The export button downloads `<bag-stem>.annotations.json`. Keep that sidecar beside
+the source bag (or in another persistent dataset directory), not in the generated
+report directory. For example:
+
+```
+system_evaluation/bags/driver_missing_001/
+|-- driver_missing_001.mcap
+|-- driver_missing_001.annotations.json
+`-- report/
+    |-- index.html
+    |-- messages.json
+    |-- messages.csv
+    |-- summary.json
+    `-- images/
+```
+
+The extractor recreates its output directory. As a safety measure, it refuses to
+do so if it finds an `*.annotations.json` file there. The original MCAP is always
+read-only. In-progress edits are keyed to the report path and bag name in browser
+`localStorage`; JSON export remains the canonical dataset artifact.
+
+Annotation files use `schema_version: 1`. Nanosecond timestamps are the primary
+message identity, with topic and node name disambiguating them and message index
+retained as useful provenance. The formal format is documented by
+[`docs/anomaly_annotations.schema.json`](docs/anomaly_annotations.schema.json).
 
 ### ./anomaly_detection
 The ROS2 node declaration for the anomaly detection system. 

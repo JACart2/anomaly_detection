@@ -1,0 +1,886 @@
+"""Generate the self-contained anomaly bag annotation report."""
+
+from __future__ import annotations
+
+import html
+import json
+from collections import Counter
+from pathlib import Path
+
+
+IMPORTANCE_NAMES = {0: "INFO", 1: "WARNING", 2: "ERROR"}
+TYPE_NAMES = {0: "TEXT", 1: "IMAGE", 2: "DATA"}
+ANNOTATION_LABELS = (
+    ("unlabeled", "Unlabeled"),
+    ("normal", "Normal"),
+    ("anomaly", "Anomaly"),
+    ("uncertain", "Uncertain"),
+    ("ignore", "Ignore"),
+)
+ANNOTATION_CATEGORIES = (
+    "Driver issue",
+    "Dynamic obstacle",
+    "Static obstacle",
+    "Mechanical issue",
+    "Sensor issue",
+    "Unauthorized access",
+    "Route issue",
+    "Other",
+)
+
+
+def text_cell(value: object) -> str:
+    """Escape a value for HTML text or attribute use."""
+    return html.escape(str(value), quote=True)
+
+
+def select_options(
+    choices: tuple[tuple[str, str], ...], selected: str = ""
+) -> str:
+    """Return escaped option elements for a report select control."""
+    return "".join(
+        f'<option value="{text_cell(value)}"'
+        f'{" selected" if value == selected else ""}>{text_cell(label)}</option>'
+        for value, label in choices
+    )
+
+
+def annotation_category_options() -> str:
+    """Return the category choices shared by metadata and annotations."""
+    choices = (("", "No category"),) + tuple(
+        (category, category) for category in ANNOTATION_CATEGORIES
+    )
+    return select_options(choices)
+
+
+def report_rows(records: list[dict]) -> str:
+    """Build message rows with stable identity and annotation controls."""
+    rows = []
+    label_options = select_options(ANNOTATION_LABELS, selected="unlabeled")
+    category_options = annotation_category_options()
+    for record in records:
+        image = record["image"]
+        image_html = "&mdash;"
+        if image.get("file"):
+            image_html = (
+                f'<a href="{text_cell(image["file"])}">'
+                f'<img loading="lazy" src="{text_cell(image["file"])}" '
+                f'alt="Image from message {record["index"]}"></a>'
+            )
+        elif image.get("raw_file"):
+            image_html = f'<a href="{text_cell(image["raw_file"])}">raw bytes</a>'
+
+        details = []
+        if record["message"]:
+            details.append(f'<div class="message">{text_cell(record["message"])}</div>')
+        if record["data_type"] or record["data_base64"]:
+            details.append(
+                "<details><summary>Data payload "
+                f'({record["data_length"]} bytes, {text_cell(record["data_type"])})'
+                f'</summary><code>{text_cell(record["data_base64"])}</code></details>'
+            )
+        if image.get("error"):
+            details.append(f'<div class="error">{text_cell(image["error"])}</div>')
+
+        searchable = " ".join(
+            [
+                record["timestamp"],
+                record["node_name"],
+                record["importance_name"],
+                record["type_name"],
+                record["message"],
+                record["data_type"],
+            ]
+        ).lower()
+        rows.append(
+            f"""<tr class="label-unlabeled" data-search="{text_cell(searchable)}"
+                data-importance="{text_cell(record["importance_name"])}"
+                data-type="{text_cell(record["type_name"])}"
+                data-annotation-label="unlabeled"
+                data-message-index="{record["index"]}"
+                data-recorded-timestamp-ns="{record["recorded_timestamp_ns"]}"
+                data-topic="{text_cell(record["topic"])}"
+                data-node-name="{text_cell(record["node_name"])}">
+              <td>{record["index"]}</td>
+              <td><time>{text_cell(record["timestamp"])}</time>
+                <div class="timestamp-ns">{record["recorded_timestamp_ns"]} ns</div></td>
+              <td>{text_cell(record["node_name"])}</td>
+              <td><span class="badge {record["importance_name"].lower()}">{text_cell(record["importance_name"])}</span></td>
+              <td>{text_cell(record["type_name"])}</td>
+              <td>{''.join(details) or "&mdash;"}</td>
+              <td>{image_html}</td>
+              <td><select class="annotation-label" aria-label="Label message {record["index"]}">
+                {label_options}
+              </select></td>
+              <td><select class="annotation-category" aria-label="Category for message {record["index"]}">
+                {category_options}
+              </select></td>
+              <td class="annotation-cell">
+                <textarea class="annotation-description" rows="2" aria-label="Annotation for message {record["index"]}" placeholder="Annotation notes"></textarea>
+                <div class="row-actions">
+                  <button type="button" class="small set-range-start">Set range start</button>
+                  <button type="button" class="small set-range-end">Set range end</button>
+                </div>
+              </td>
+            </tr>"""
+        )
+    return "".join(rows)
+
+
+def annotation_panel(bag: Path) -> str:
+    """Build the bag metadata, import/export, and range editor markup."""
+    categories = annotation_category_options()
+    range_labels = select_options(ANNOTATION_LABELS, selected="anomaly")
+    return f"""
+  <section class="panel" aria-labelledby="metadata-heading">
+    <div class="section-heading">
+      <div>
+        <h2 id="metadata-heading">Bag metadata</h2>
+        <p class="muted compact">Describe this recording. Changes are saved locally in this browser.</p>
+      </div>
+      <div class="annotation-toolbar">
+        <button id="export-annotations" type="button" class="primary">Export annotations</button>
+        <label class="button" for="import-annotations">Import annotations</label>
+        <input id="import-annotations" class="visually-hidden" type="file" accept=".json,application/json">
+      </div>
+    </div>
+    <div class="form-grid">
+      <label>Bag file<input id="bag-file" value="{text_cell(bag.name)}" readonly></label>
+      <label>Scenario<input id="bag-scenario" placeholder="e.g. Driver missing"></label>
+      <label>Category<select id="bag-category">{categories}</select></label>
+      <label>Anomalous<select id="bag-anomalous">
+        <option value="">Not set</option><option value="true">Yes</option><option value="false">No</option>
+      </select></label>
+      <label>Description<textarea id="bag-description" rows="2"></textarea></label>
+      <label>Environment<input id="bag-environment"></label>
+      <label>Cart<input id="bag-cart"></label>
+      <label>Annotator<input id="bag-annotator"></label>
+      <label class="wide">Notes<textarea id="bag-notes" rows="2"></textarea></label>
+    </div>
+    <div class="status-line">
+      <span id="annotation-count">0 message annotations</span>
+      <span id="persistence-status" class="muted" role="status"></span>
+    </div>
+    <p class="safety-note">The report directory may be regenerated. Keep the exported
+      <code>{text_cell(bag.stem)}.annotations.json</code> beside the source bag or in another persistent dataset directory.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="range-heading">
+    <div class="section-heading">
+      <div>
+        <h2 id="range-heading">Time ranges</h2>
+        <p class="muted compact">Use a message row's range buttons, or enter exact nanosecond timestamps.</p>
+      </div>
+      <strong id="range-count">0 ranges</strong>
+    </div>
+    <div class="range-editor">
+      <label>Start timestamp (ns)<input id="range-start-ns" inputmode="numeric" placeholder="Select a start message"></label>
+      <label>End timestamp (ns)<input id="range-end-ns" inputmode="numeric" placeholder="Select an end message"></label>
+      <label>Label<select id="range-label">{range_labels}</select></label>
+      <label>Category<select id="range-category">{categories}</select></label>
+      <label class="wide">Description<textarea id="range-description" rows="2" placeholder="What happens during this range?"></textarea></label>
+      <div class="range-actions wide">
+        <button id="save-range" type="button" class="primary">Save range</button>
+        <button id="cancel-range" type="button" hidden>Cancel edit</button>
+        <span id="range-validation" class="error" role="alert"></span>
+      </div>
+    </div>
+    <div id="range-list" class="range-list"></div>
+  </section>
+"""
+
+
+def report_styles() -> str:
+    """Return the self-contained report CSS."""
+    return """
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 1.25rem; background: #101418; color: #e8edf2; }
+    h1 { margin: 0 0 .3rem; } h2 { margin: 0; font-size: 1.15rem; }
+    .muted { color: #9aa7b3; } .compact { margin: .25rem 0 0; }
+    .summary { display: flex; flex-wrap: wrap; gap: .7rem; margin: 1rem 0; }
+    .card, .panel { background: #1a2027; border: 1px solid #303943; border-radius: .6rem; }
+    .card { padding: .7rem 1rem; } .panel { margin: 1rem 0; padding: 1rem; }
+    .section-heading, .annotation-toolbar, .status-line, .range-actions, .row-actions {
+      display: flex; align-items: center; flex-wrap: wrap; gap: .55rem;
+    }
+    .section-heading { justify-content: space-between; margin-bottom: .9rem; }
+    .form-grid, .range-editor { display: grid; grid-template-columns: repeat(4, minmax(10rem, 1fr)); gap: .8rem; }
+    .form-grid label, .range-editor label { display: flex; flex-direction: column; gap: .3rem; color: #c8d1da; font-size: .85rem; }
+    .wide { grid-column: span 2; }
+    input, select, textarea, button, .button { font: inherit; }
+    input, select, textarea { width: 100%; padding: .55rem; color: inherit; background: #11171d;
+      border: 1px solid #46525e; border-radius: .4rem; }
+    textarea { resize: vertical; } input[readonly] { color: #9aa7b3; }
+    button, .button { display: inline-block; padding: .5rem .75rem; color: #e8edf2; background: #29343e;
+      border: 1px solid #52616e; border-radius: .4rem; cursor: pointer; text-decoration: none; }
+    button:hover, .button:hover { background: #354451; }
+    button.primary { background: #1769aa; border-color: #2e8bd2; }
+    button.danger { background: #64262d; border-color: #93414b; }
+    button.small { padding: .25rem .4rem; font-size: .75rem; }
+    [hidden] { display: none !important; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .status-line { justify-content: space-between; margin-top: .8rem; }
+    .safety-note { margin: .8rem 0 0; padding: .65rem; color: #d6cda7; background: #292719; border-radius: .4rem; }
+    .controls { position: sticky; top: 0; z-index: 2; display: flex; gap: .6rem;
+      flex-wrap: wrap; padding: .7rem 0; background: #101418ee; }
+    .controls input { width: min(32rem, 100%); }
+    .controls select { width: auto; min-width: 11rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th { position: sticky; top: 4.1rem; z-index: 1; background: #1a2027; text-align: left; }
+    th, td { border-bottom: 1px solid #303943; padding: .55rem; vertical-align: top; }
+    tbody tr { box-shadow: inset 4px 0 transparent; } tbody tr:hover { background: #192129; }
+    tbody tr.label-normal { box-shadow: inset 4px 0 #37a169; background: #12241c; }
+    tbody tr.label-anomaly { box-shadow: inset 4px 0 #ef5965; background: #2b1519; }
+    tbody tr.label-uncertain { box-shadow: inset 4px 0 #e4b84b; background: #292315; }
+    tbody tr.label-ignore { box-shadow: inset 4px 0 #77838e; opacity: .68; }
+    img { width: 220px; max-height: 180px; object-fit: contain; background: #050709; }
+    .message { white-space: pre-wrap; max-width: 42rem; }
+    code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+    details { margin-top: .4rem; max-width: 42rem; }
+    .badge { padding: .18rem .38rem; border-radius: .3rem; font-weight: 650; }
+    .info { background: #17466b; } .warning { background: #735c12; }
+    .error { background: #70232b; } .error:not(.badge) { color: #ff919d; background: transparent; }
+    .timestamp-ns { margin-top: .2rem; color: #8795a1; font-family: ui-monospace, monospace; font-size: .7rem; }
+    .annotation-cell { min-width: 15rem; } .annotation-cell textarea { min-width: 14rem; }
+    .row-actions { margin-top: .35rem; }
+    .range-list { display: grid; gap: .55rem; margin-top: 1rem; }
+    .range-item { display: grid; grid-template-columns: 1fr auto; gap: .7rem; padding: .7rem;
+      background: #11171d; border-left: 4px solid #ef5965; border-radius: .35rem; }
+    .range-item.label-normal { border-left-color: #37a169; }
+    .range-item.label-uncertain { border-left-color: #e4b84b; }
+    .range-item.label-ignore, .range-item.label-unlabeled { border-left-color: #77838e; }
+    .range-item p { margin: .25rem 0 0; white-space: pre-wrap; }
+    .range-time { color: #aeb9c3; font-family: ui-monospace, monospace; font-size: .78rem; overflow-wrap: anywhere; }
+    @media (max-width: 1050px) {
+      .form-grid, .range-editor { grid-template-columns: repeat(2, minmax(10rem, 1fr)); }
+      th:nth-child(3), td:nth-child(3) { display: none; }
+    }
+    @media (max-width: 650px) {
+      body { padding: .7rem; } .form-grid, .range-editor { grid-template-columns: 1fr; }
+      .wide { grid-column: span 1; } .panel { padding: .75rem; }
+    }
+"""
+
+
+def json_for_script(value: object) -> str:
+    """Encode JSON safely for use inside an HTML script element."""
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
+def report_script(bag: Path) -> str:
+    """Return annotation, persistence, filtering, and export JavaScript."""
+    script = r'''
+    "use strict";
+    const SCHEMA_VERSION = 1;
+    const BAG_FILE = __BAG_FILE__;
+    const EXPORT_FILE = __EXPORT_FILE__;
+    const STORAGE_KEY = `jacart-anomaly-annotations:v1:${window.location.pathname}:${BAG_FILE}`;
+    const LABELS = new Set(["unlabeled", "normal", "anomaly", "uncertain", "ignore"]);
+    const CATEGORIES = new Set([
+      "", "Driver issue", "Dynamic obstacle", "Static obstacle", "Mechanical issue",
+      "Sensor issue", "Unauthorized access", "Route issue", "Other"
+    ]);
+    const TIMESTAMP_FIELDS = new Set(["recorded_timestamp_ns", "start_timestamp_ns", "end_timestamp_ns"]);
+    const rows = [...document.querySelectorAll("#messages tbody tr")];
+    const search = document.querySelector("#search");
+    const importance = document.querySelector("#importance");
+    const type = document.querySelector("#type");
+    const labelFilter = document.querySelector("#label-filter");
+    const visible = document.querySelector("#visible");
+    const persistenceStatus = document.querySelector("#persistence-status");
+    const rangeValidation = document.querySelector("#range-validation");
+    let annotations = [];
+    let ranges = [];
+    let editingRangeIndex = null;
+    let endpointIndexes = {start: null, end: null};
+    let persistTimer = null;
+
+    const metadataControls = {
+      scenario: document.querySelector("#bag-scenario"),
+      category: document.querySelector("#bag-category"),
+      anomalous: document.querySelector("#bag-anomalous"),
+      description: document.querySelector("#bag-description"),
+      environment: document.querySelector("#bag-environment"),
+      cart: document.querySelector("#bag-cart"),
+      annotator: document.querySelector("#bag-annotator"),
+      notes: document.querySelector("#bag-notes"),
+    };
+    const rangeControls = {
+      start: document.querySelector("#range-start-ns"),
+      end: document.querySelector("#range-end-ns"),
+      label: document.querySelector("#range-label"),
+      category: document.querySelector("#range-category"),
+      description: document.querySelector("#range-description"),
+    };
+
+    function integerString(value, fieldName) {
+      const result = String(value ?? "").trim();
+      if (!/^\d+$/.test(result)) throw new Error(`${fieldName} must be a non-negative integer`);
+      return result.replace(/^0+(?=\d)/, "");
+    }
+
+    function optionalIndex(value) {
+      if (value === undefined || value === null || value === "") return null;
+      const parsed = Number(value);
+      return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+    }
+
+    function requiredIndex(value, fieldName) {
+      const parsed = optionalIndex(value);
+      if (parsed === null) throw new Error(`${fieldName} must be a non-negative integer`);
+      return parsed;
+    }
+
+    function normalizedLabel(value) {
+      const label = String(value || "unlabeled").toLowerCase();
+      if (!LABELS.has(label)) throw new Error(`Unsupported annotation label: ${value}`);
+      return label;
+    }
+
+    function normalizedCategory(value) {
+      const category = String(value ?? "");
+      if (!CATEGORIES.has(category)) throw new Error(`Unsupported annotation category: ${category}`);
+      return category;
+    }
+
+    function annotationForRow(row) {
+      const candidates = annotations
+        .map((annotation, index) => ({annotation, index}))
+        .filter(({annotation}) => annotation.recorded_timestamp_ns === row.dataset.recordedTimestampNs
+          && annotation.topic === row.dataset.topic && annotation.node_name === row.dataset.nodeName);
+      if (candidates.length <= 1) return candidates[0] || null;
+      return candidates.find(({annotation}) =>
+        String(annotation.message_index) === row.dataset.messageIndex) || candidates[0];
+    }
+
+    function annotationFromRow(row) {
+      return {
+        message_index: Number(row.dataset.messageIndex),
+        recorded_timestamp_ns: row.dataset.recordedTimestampNs,
+        topic: row.dataset.topic,
+        node_name: row.dataset.nodeName,
+        label: row.querySelector(".annotation-label").value,
+        category: row.querySelector(".annotation-category").value,
+        description: row.querySelector(".annotation-description").value.trim(),
+      };
+    }
+
+    function isEmptyAnnotation(annotation) {
+      return annotation.label === "unlabeled" && !annotation.category && !annotation.description;
+    }
+
+    function updateRowAppearance(row) {
+      const label = row.querySelector(".annotation-label").value;
+      for (const name of LABELS) row.classList.remove(`label-${name}`);
+      row.classList.add(`label-${label}`);
+      row.dataset.annotationLabel = label;
+    }
+
+    function updateAnnotationFromRow(row) {
+      const next = annotationFromRow(row);
+      const match = annotationForRow(row);
+      if (isEmptyAnnotation(next)) {
+        if (match) annotations.splice(match.index, 1);
+      } else if (match) annotations[match.index] = next;
+      else annotations.push(next);
+      updateRowAppearance(row);
+      updateCounts();
+      filterRows();
+      schedulePersist();
+    }
+
+    function applyAnnotationsToRows() {
+      for (const row of rows) {
+        const annotation = annotationForRow(row)?.annotation;
+        row.querySelector(".annotation-label").value = annotation?.label || "unlabeled";
+        row.querySelector(".annotation-category").value = annotation?.category || "";
+        row.querySelector(".annotation-description").value = annotation?.description || "";
+        updateRowAppearance(row);
+      }
+      updateCounts();
+      filterRows();
+    }
+
+    function collectBagMetadata() {
+      const anomalousValue = metadataControls.anomalous.value;
+      return {
+        file: BAG_FILE,
+        scenario: metadataControls.scenario.value.trim(),
+        category: metadataControls.category.value,
+        anomalous: anomalousValue === "" ? null : anomalousValue === "true",
+        description: metadataControls.description.value.trim(),
+        environment: metadataControls.environment.value.trim(),
+        cart: metadataControls.cart.value.trim(),
+        annotator: metadataControls.annotator.value.trim(),
+        notes: metadataControls.notes.value.trim(),
+      };
+    }
+
+    function applyBagMetadata(bag) {
+      for (const [name, control] of Object.entries(metadataControls)) {
+        if (name === "anomalous") {
+          control.value = bag?.anomalous === true ? "true" : bag?.anomalous === false ? "false" : "";
+        } else control.value = String(bag?.[name] ?? "");
+      }
+    }
+
+    function annotationDocument() {
+      return {
+        schema_version: SCHEMA_VERSION,
+        bag: collectBagMetadata(),
+        ranges: ranges.map(range => {
+          const result = {
+            start_timestamp_ns: range.start_timestamp_ns,
+            end_timestamp_ns: range.end_timestamp_ns,
+            label: range.label,
+            category: range.category,
+            description: range.description,
+          };
+          if (range.start_message_index !== null) result.start_message_index = range.start_message_index;
+          if (range.end_message_index !== null) result.end_message_index = range.end_message_index;
+          return result;
+        }),
+        annotations: annotations.map(annotation => ({...annotation})),
+      };
+    }
+
+    function rangeDraft() {
+      return {
+        start_timestamp_ns: rangeControls.start.value.trim(),
+        end_timestamp_ns: rangeControls.end.value.trim(),
+        start_message_index: endpointIndexes.start,
+        end_message_index: endpointIndexes.end,
+        label: rangeControls.label.value,
+        category: rangeControls.category.value,
+        description: rangeControls.description.value,
+        editing_range_index: editingRangeIndex,
+      };
+    }
+
+    function localDocument() {
+      return {...annotationDocument(), range_draft: rangeDraft()};
+    }
+
+    function applyRangeDraft(draft) {
+      if (!draft || typeof draft !== "object") return;
+      rangeControls.start.value = String(draft.start_timestamp_ns ?? "");
+      rangeControls.end.value = String(draft.end_timestamp_ns ?? "");
+      rangeControls.label.value = LABELS.has(draft.label) ? draft.label : "anomaly";
+      rangeControls.category.value = CATEGORIES.has(draft.category) ? draft.category : "";
+      rangeControls.description.value = String(draft.description ?? "");
+      endpointIndexes = {
+        start: optionalIndex(draft.start_message_index),
+        end: optionalIndex(draft.end_message_index),
+      };
+      const editIndex = optionalIndex(draft.editing_range_index);
+      editingRangeIndex = editIndex !== null && editIndex < ranges.length ? editIndex : null;
+      if (editingRangeIndex !== null) {
+        document.querySelector("#save-range").textContent = "Update range";
+        document.querySelector("#cancel-range").hidden = false;
+        rangeValidation.textContent = `Editing range ${editingRangeIndex + 1}.`;
+      }
+    }
+
+    function losslessJson(document) {
+      const marker = "__JACART_EXACT_INTEGER__";
+      const encoded = JSON.stringify(document, (key, value) => {
+        if (TIMESTAMP_FIELDS.has(key)) return `${marker}${integerString(value, key)}`;
+        return value;
+      }, 2);
+      return encoded.replace(new RegExp(`"${marker}(\\d+)"`, "g"), "$1") + "\n";
+    }
+
+    function parseLosslessJson(text) {
+      const protectedTimestamps = text.replace(
+        /("(?:recorded_timestamp_ns|start_timestamp_ns|end_timestamp_ns)"\s*:\s*)(\d+)(?=\s*[,}])/g,
+        '$1"$2"'
+      );
+      return JSON.parse(protectedTimestamps);
+    }
+
+    function normalizeDocument(document) {
+      if (!document || document.schema_version !== SCHEMA_VERSION) {
+        throw new Error(`Expected annotation schema_version ${SCHEMA_VERSION}`);
+      }
+      if (!document.bag || !Array.isArray(document.annotations) || !Array.isArray(document.ranges)) {
+        throw new Error("Annotation JSON must contain bag, ranges, and annotations");
+      }
+      const normalizedAnnotations = document.annotations.map((annotation, index) => ({
+        message_index: requiredIndex(annotation.message_index, `annotations[${index}].message_index`),
+        recorded_timestamp_ns: integerString(annotation.recorded_timestamp_ns, `annotations[${index}].recorded_timestamp_ns`),
+        topic: String(annotation.topic ?? ""),
+        node_name: String(annotation.node_name ?? ""),
+        label: normalizedLabel(annotation.label),
+        category: normalizedCategory(annotation.category),
+        description: String(annotation.description ?? ""),
+      }));
+      for (const [index, annotation] of normalizedAnnotations.entries()) {
+        if (!annotation.topic) throw new Error(`annotations[${index}].topic must not be empty`);
+      }
+      const normalizedRanges = document.ranges.map((range, index) => {
+        const start = integerString(range.start_timestamp_ns, `ranges[${index}].start_timestamp_ns`);
+        const end = integerString(range.end_timestamp_ns, `ranges[${index}].end_timestamp_ns`);
+        if (BigInt(end) < BigInt(start)) throw new Error(`Range ${index + 1} ends before it starts`);
+        return {
+          start_timestamp_ns: start,
+          end_timestamp_ns: end,
+          start_message_index: optionalIndex(range.start_message_index),
+          end_message_index: optionalIndex(range.end_message_index),
+          label: normalizedLabel(range.label),
+          category: normalizedCategory(range.category),
+          description: String(range.description ?? ""),
+        };
+      });
+      const anomalous = document.bag.anomalous;
+      if (anomalous !== true && anomalous !== false && anomalous !== null) {
+        throw new Error("bag.anomalous must be true, false, or null");
+      }
+      const normalizedBag = {
+        file: String(document.bag.file ?? ""),
+        scenario: String(document.bag.scenario ?? ""),
+        category: normalizedCategory(document.bag.category),
+        anomalous,
+        description: String(document.bag.description ?? ""),
+        environment: String(document.bag.environment ?? ""),
+        cart: String(document.bag.cart ?? ""),
+        annotator: String(document.bag.annotator ?? ""),
+        notes: String(document.bag.notes ?? ""),
+      };
+      if (!normalizedBag.file) throw new Error("bag.file must not be empty");
+      return {
+        bag: normalizedBag,
+        annotations: normalizedAnnotations,
+        ranges: normalizedRanges,
+        rangeDraft: document.range_draft,
+      };
+    }
+
+    function restoreDocument(document, checkBagName, restoreDraft = false) {
+      const normalized = normalizeDocument(document);
+      const importedBagName = String(normalized.bag.file ?? "");
+      if (checkBagName && importedBagName && importedBagName !== BAG_FILE
+          && !window.confirm(`These annotations are for ${importedBagName}, not ${BAG_FILE}. Import anyway?`)) {
+        return false;
+      }
+      annotations = normalized.annotations;
+      ranges = normalized.ranges;
+      applyBagMetadata(normalized.bag);
+      applyAnnotationsToRows();
+      renderRanges();
+      if (restoreDraft) applyRangeDraft(normalized.rangeDraft);
+      schedulePersist(true);
+      return true;
+    }
+
+    function schedulePersist(immediate = false) {
+      window.clearTimeout(persistTimer);
+      persistenceStatus.textContent = "Saving locally…";
+      const save = () => {
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(localDocument()));
+          persistenceStatus.textContent = `Saved locally ${new Date().toLocaleTimeString()}`;
+        } catch (error) {
+          persistenceStatus.textContent = "Browser autosave unavailable; export JSON to preserve your work.";
+        }
+      };
+      if (immediate) save(); else persistTimer = window.setTimeout(save, 180);
+    }
+
+    function restoreLocalState() {
+      try {
+        const saved = window.localStorage.getItem(STORAGE_KEY);
+        if (!saved) {
+          persistenceStatus.textContent = "No locally saved annotations yet.";
+          return;
+        }
+        restoreDocument(JSON.parse(saved), false, true);
+        persistenceStatus.textContent = "Restored locally saved annotations.";
+      } catch (error) {
+        persistenceStatus.textContent = `Could not restore browser autosave: ${error.message}`;
+      }
+    }
+
+    function filterRows() {
+      const query = search.value.trim().toLowerCase();
+      let count = 0;
+      for (const row of rows) {
+        const annotationSearch = [
+          row.querySelector(".annotation-label").value,
+          row.querySelector(".annotation-category").value,
+          row.querySelector(".annotation-description").value,
+        ].join(" ").toLowerCase();
+        const show = (!query || row.dataset.search.includes(query) || annotationSearch.includes(query))
+          && (!importance.value || row.dataset.importance === importance.value)
+          && (!type.value || row.dataset.type === type.value)
+          && (!labelFilter.value || row.dataset.annotationLabel === labelFilter.value);
+        row.hidden = !show;
+        if (show) count++;
+      }
+      visible.textContent = `${count.toLocaleString()} of ${rows.length.toLocaleString()} shown`;
+    }
+
+    function updateCounts() {
+      document.querySelector("#annotation-count").textContent =
+        `${annotations.length.toLocaleString()} message annotation${annotations.length === 1 ? "" : "s"}`;
+      document.querySelector("#range-count").textContent =
+        `${ranges.length.toLocaleString()} range${ranges.length === 1 ? "" : "s"}`;
+    }
+
+    function displayTimestamp(timestamp) {
+      try {
+        const millis = BigInt(timestamp) / 1000000n;
+        return `${new Date(Number(millis)).toISOString()} (${timestamp} ns)`;
+      } catch (error) {
+        return `${timestamp} ns`;
+      }
+    }
+
+    function renderRanges() {
+      const list = document.querySelector("#range-list");
+      list.replaceChildren();
+      ranges.forEach((range, index) => {
+        const item = document.createElement("article");
+        item.className = `range-item label-${range.label}`;
+        const content = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = `${range.label.toUpperCase()}${range.category ? ` · ${range.category}` : ""}`;
+        const time = document.createElement("div");
+        time.className = "range-time";
+        time.textContent = `${displayTimestamp(range.start_timestamp_ns)} → ${displayTimestamp(range.end_timestamp_ns)}`;
+        content.append(title, time);
+        if (range.description) {
+          const description = document.createElement("p");
+          description.textContent = range.description;
+          content.append(description);
+        }
+        const actions = document.createElement("div");
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "small edit-range";
+        edit.dataset.index = String(index);
+        edit.textContent = "Edit";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "small danger delete-range";
+        remove.dataset.index = String(index);
+        remove.textContent = "Delete";
+        actions.append(edit, remove);
+        item.append(content, actions);
+        list.append(item);
+      });
+      updateCounts();
+    }
+
+    function setRangeEndpoint(kind, row) {
+      rangeControls[kind].value = row.dataset.recordedTimestampNs;
+      endpointIndexes[kind] = Number(row.dataset.messageIndex);
+      rangeValidation.textContent = `${kind === "start" ? "Start" : "End"} set from message ${row.dataset.messageIndex}.`;
+      document.querySelector("#range-heading").scrollIntoView({behavior: "smooth", block: "start"});
+      schedulePersist();
+    }
+
+    function resetRangeEditor() {
+      rangeControls.start.value = "";
+      rangeControls.end.value = "";
+      rangeControls.label.value = "anomaly";
+      rangeControls.category.value = "";
+      rangeControls.description.value = "";
+      endpointIndexes = {start: null, end: null};
+      editingRangeIndex = null;
+      document.querySelector("#save-range").textContent = "Save range";
+      document.querySelector("#cancel-range").hidden = true;
+      rangeValidation.textContent = "";
+    }
+
+    function saveRange() {
+      try {
+        const start = integerString(rangeControls.start.value, "Start timestamp");
+        const end = integerString(rangeControls.end.value, "End timestamp");
+        if (BigInt(end) < BigInt(start)) throw new Error("End timestamp must not be before start timestamp");
+        const range = {
+          start_timestamp_ns: start,
+          end_timestamp_ns: end,
+          start_message_index: endpointIndexes.start,
+          end_message_index: endpointIndexes.end,
+          label: normalizedLabel(rangeControls.label.value),
+          category: rangeControls.category.value,
+          description: rangeControls.description.value.trim(),
+        };
+        if (editingRangeIndex === null) ranges.push(range);
+        else ranges[editingRangeIndex] = range;
+        renderRanges();
+        resetRangeEditor();
+        schedulePersist();
+      } catch (error) {
+        rangeValidation.textContent = error.message;
+      }
+    }
+
+    function editRange(index) {
+      const range = ranges[index];
+      rangeControls.start.value = range.start_timestamp_ns;
+      rangeControls.end.value = range.end_timestamp_ns;
+      rangeControls.label.value = range.label;
+      rangeControls.category.value = range.category;
+      rangeControls.description.value = range.description;
+      endpointIndexes = {start: range.start_message_index, end: range.end_message_index};
+      editingRangeIndex = index;
+      document.querySelector("#save-range").textContent = "Update range";
+      document.querySelector("#cancel-range").hidden = false;
+      rangeValidation.textContent = `Editing range ${index + 1}.`;
+      document.querySelector("#range-heading").scrollIntoView({behavior: "smooth", block: "start"});
+      schedulePersist();
+    }
+
+    document.querySelector("#messages tbody").addEventListener("input", event => {
+      const row = event.target.closest("tr");
+      if (row && event.target.matches(".annotation-label, .annotation-category, .annotation-description")) {
+        updateAnnotationFromRow(row);
+      }
+    });
+    document.querySelector("#messages tbody").addEventListener("change", event => {
+      const row = event.target.closest("tr");
+      if (row && event.target.matches(".annotation-label, .annotation-category")) {
+        updateAnnotationFromRow(row);
+      }
+    });
+    document.querySelector("#messages tbody").addEventListener("click", event => {
+      const row = event.target.closest("tr");
+      if (!row) return;
+      if (event.target.closest(".set-range-start")) setRangeEndpoint("start", row);
+      if (event.target.closest(".set-range-end")) setRangeEndpoint("end", row);
+    });
+    document.querySelector("#range-list").addEventListener("click", event => {
+      const edit = event.target.closest(".edit-range");
+      const remove = event.target.closest(".delete-range");
+      if (edit) editRange(Number(edit.dataset.index));
+      if (remove && window.confirm("Delete this time range?")) {
+        ranges.splice(Number(remove.dataset.index), 1);
+        if (editingRangeIndex !== null) resetRangeEditor();
+        renderRanges();
+        schedulePersist();
+      }
+    });
+    for (const control of Object.values(metadataControls)) {
+      control.addEventListener("input", () => schedulePersist());
+      control.addEventListener("change", () => schedulePersist());
+    }
+    for (const kind of ["start", "end"]) {
+      rangeControls[kind].addEventListener("input", () => { endpointIndexes[kind] = null; });
+    }
+    for (const control of Object.values(rangeControls)) {
+      control.addEventListener("input", () => schedulePersist());
+      control.addEventListener("change", () => schedulePersist());
+    }
+    search.addEventListener("input", filterRows);
+    for (const control of [importance, type, labelFilter]) control.addEventListener("change", filterRows);
+    document.querySelector("#save-range").addEventListener("click", saveRange);
+    document.querySelector("#cancel-range").addEventListener("click", () => {
+      resetRangeEditor();
+      schedulePersist();
+    });
+    document.querySelector("#export-annotations").addEventListener("click", () => {
+      const blob = new Blob([losslessJson(annotationDocument())], {type: "application/json"});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = EXPORT_FILE;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      schedulePersist(true);
+    });
+    document.querySelector("#import-annotations").addEventListener("change", async event => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        const document = parseLosslessJson(await file.text());
+        if (restoreDocument(document, true)) {
+          persistenceStatus.textContent = `Imported ${file.name} and saved it locally.`;
+        }
+      } catch (error) {
+        window.alert(`Could not import annotations: ${error.message}`);
+      } finally {
+        event.target.value = "";
+      }
+    });
+    window.addEventListener("pagehide", () => schedulePersist(true));
+
+    restoreLocalState();
+    applyAnnotationsToRows();
+    renderRanges();
+    filterRows();
+'''
+    return script.replace("__BAG_FILE__", json_for_script(bag.name)).replace(
+        "__EXPORT_FILE__", json_for_script(f"{bag.stem}.annotations.json")
+    )
+
+
+def write_html(
+    output: Path,
+    bag: Path,
+    records: list[dict],
+    importance_counts: Counter,
+    type_counts: Counter,
+    image_count: int,
+) -> None:
+    """Write the complete local annotation report."""
+    importance_summary = ", ".join(
+        f"{name}: {importance_counts.get(value, 0)}"
+        for value, name in IMPORTANCE_NAMES.items()
+    )
+    type_summary = ", ".join(
+        f"{name}: {type_counts.get(value, 0)}" for value, name in TYPE_NAMES.items()
+    )
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anomaly bag annotation report</title>
+  <style>{report_styles()}</style>
+</head>
+<body>
+  <h1>Anomaly bag annotation report</h1>
+  <div class="muted">{text_cell(bag.name)}</div>
+  <div class="summary">
+    <div class="card"><strong>{len(records):,}</strong> messages</div>
+    <div class="card"><strong>{image_count:,}</strong> extracted images</div>
+    <div class="card">{text_cell(importance_summary)}</div>
+    <div class="card">{text_cell(type_summary)}</div>
+  </div>
+  {annotation_panel(bag)}
+  <div class="controls">
+    <input id="search" type="search" placeholder="Filter timestamp, node, level, type, message, or annotation">
+    <select id="importance"><option value="">All importance levels</option>
+      <option>INFO</option><option>WARNING</option><option>ERROR</option>
+    </select>
+    <select id="type"><option value="">All message types</option>
+      <option>TEXT</option><option>IMAGE</option><option>DATA</option>
+    </select>
+    <select id="label-filter"><option value="">All annotation labels</option>
+      <option value="unlabeled">Unlabeled</option><option value="normal">Normal</option>
+      <option value="anomaly">Anomaly</option><option value="uncertain">Uncertain</option>
+      <option value="ignore">Ignore</option>
+    </select>
+    <span id="visible" class="muted"></span>
+  </div>
+  <table id="messages">
+    <thead><tr><th>#</th><th>Recorded time (UTC)</th><th>Node</th>
+      <th>Importance</th><th>Type</th><th>Contents</th><th>Image</th>
+      <th>Label</th><th>Category</th><th>Annotation</th></tr></thead>
+    <tbody>{report_rows(records)}</tbody>
+  </table>
+  <script>{report_script(bag)}</script>
+</body>
+</html>
+"""
+    (output / "index.html").write_text(document, encoding="utf-8")
