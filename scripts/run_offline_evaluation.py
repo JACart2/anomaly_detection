@@ -15,16 +15,12 @@ replays the bag, collects decisions, and writes a detailed Markdown report.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import copy
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import itertools
 import json
 import math
 import os
-from pathlib import Path
 import random
 import re
 import secrets
@@ -36,6 +32,10 @@ import sys
 import tempfile
 import threading
 import time
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
@@ -1067,9 +1067,10 @@ def extract_human_labels(
 
 
 class EvaluationCollector(Node):
-    """Collect detector topics and correlate calls, context, and decisions."""
+    """Collect detector calls, published decisions, and alert counts."""
 
     def __init__(self, settings: RunnerSettings) -> None:
+        """Subscribe to the detector topics needed for one evaluation run."""
         super().__init__('offline_evaluation_collector')
         self.settings = settings
         self.state = CollectorState()
@@ -1084,19 +1085,14 @@ class EvaluationCollector(Node):
             self.state = CollectorState()
             self.condition.notify_all()
 
-    def _touch(self) -> int:
-        now = time.monotonic_ns()
-        self.state.last_activity_ns = now
-        return now
+    def _touch(self) -> None:
+        self.state.last_activity_ns = time.monotonic_ns()
 
-    def _llm_called(self, message: Bool) -> None:
+    def _llm_called(self, _message: Bool) -> None:
         with self.condition:
             self._touch()
             self.state.llm_calls.append(
-                {
-                    'received_at_utc_ns': time.time_ns(),
-                    'value': bool(message.data),
-                }
+                {'received_at_utc_ns': time.time_ns()}
             )
             self.condition.notify_all()
 
@@ -1258,17 +1254,23 @@ def read_artifacts(directory: Path) -> list[dict[str, Any]]:
         match = ARTIFACT_FILE_PATTERN.match(path.name)
         file_timestamp = int(match.group('timestamp')) if match else None
         try:
+            file_mtime = path.stat().st_mtime_ns
+        except OSError:
+            file_mtime = None
+        try:
             payload = json.loads(path.read_text(encoding='utf-8'))
             if not isinstance(payload, dict):
                 raise ValueError('artifact root is not an object')
             payload['_file'] = path.name
             payload['_file_timestamp_ns'] = file_timestamp
+            payload['_file_mtime_ns'] = file_mtime
             artifacts.append(payload)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             artifacts.append(
                 {
                     '_file': path.name,
                     '_file_timestamp_ns': file_timestamp,
+                    '_file_mtime_ns': file_mtime,
                     '_parse_error': str(exc),
                 }
             )
@@ -1277,7 +1279,7 @@ def read_artifacts(directory: Path) -> list[dict[str, Any]]:
 
 def artifact_timestamp_ns(artifact: dict[str, Any]) -> int | None:
     """Return an artifact completion timestamp from content or filename."""
-    for key in ('timestamp_ns', '_file_timestamp_ns'):
+    for key in ('_file_mtime_ns', 'timestamp_ns', '_file_timestamp_ns'):
         value = artifact.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             return value
@@ -1306,6 +1308,9 @@ def match_artifacts_to_calls(
             for call_index in unmatched
             if artifact_time is not None
             and isinstance(llm_calls[call_index].get('received_at_utc_ns'), int)
+            and not isinstance(
+                llm_calls[call_index].get('received_at_utc_ns'), bool
+            )
             and llm_calls[call_index]['received_at_utc_ns'] <= artifact_time
         ]
         if preceding:
@@ -1367,12 +1372,12 @@ def llm_decisions_from_artifacts(
                 'model_latency_seconds': None,
             }
         )
-        if isinstance(contexts, list):
+        if context_messages:
             candidates = sorted(
                 {
                     timestamp
-                    for context in contexts
-                    for timestamp in embedded_timestamps(str(context))
+                    for context in context_messages
+                    for timestamp in embedded_timestamps(context)
                 }
             )
             if candidates:
@@ -1652,7 +1657,7 @@ def execute_one(
     experiment: Experiment,
     trial: int,
     settings: RunnerSettings,
-    collector: EvaluationCollector,
+    collector: EvaluationCollector | None,
     labels: list[dict[str, Any]],
     label_warnings: list[str],
 ) -> dict[str, Any]:
@@ -1691,6 +1696,7 @@ def execute_one(
         )
         return result
 
+    assert collector is not None
     collector.reset()
     detector_process: subprocess.Popen[Any] | None = None
     player_process: subprocess.Popen[Any] | None = None
@@ -2581,9 +2587,10 @@ def append_report_overview(lines: list[str], report: dict[str, Any]) -> None:
             'that LLM decision.',
             '- Immediate safety decisions are counted separately and omitted from '
             'the LLM-decision table because they have no original model response.',
-            '- **LLM-judged API-response consistency** compares paired original '
-            'responses for the same replay source. It permits wording changes but '
-            'flags material conflicts in the decision, severity, action, or evidence.',
+            '- When semantic judging is enabled, **LLM-judged API-response '
+            'consistency** compares paired original responses for the same replay '
+            'source. It permits wording changes but flags material conflicts in '
+            'the decision, severity, action, or evidence.',
             '- Aggregate severity and action distributions combine all completed '
             'replays. `None` means no completed decision supplied a value for that '
             'field.',
@@ -2666,68 +2673,10 @@ def render_ground_truth(lines: list[str], truth: Any) -> None:
     append_messages(lines, 'Ground-truth warnings', truth.get('warnings'))
 
 
-def render_report_markdown(report: dict[str, Any]) -> str:
-    """Render a detailed Markdown report from structured evaluation results."""
-    experiment = report['experiment']
-    overall = report['overall']
-    status = str(experiment['run_status']).replace('_', ' ').title()
-    lines = [
-        '# Offline Anomaly-Detection Evaluation',
-        '',
-        f'**Status:** {status}',
-        '',
-    ]
-    append_report_overview(lines, report)
-    lines.extend(['## Experiment summary', ''])
-    execution_count = (
-        f'{experiment["attempted_executions"]} attempted / '
-        f'{experiment["expected_executions"]} expected'
-    )
-    summary_rows = [
-        ('Mode', experiment['evaluation_mode']),
-        ('Started (UTC)', experiment['started_at_utc']),
-        ('Finished (UTC)', experiment.get('finished_at_utc')),
-        ('Playback rate', f'{experiment["playback_rate"]}×'),
-        ('Semantic LLM judging', experiment.get('semantic_judge_enabled', False)),
-        ('Executions', execution_count),
-        ('Configuration file', experiment['evaluation_yaml']),
-        ('Recordings location', experiment['recordings_folder']),
-        ('Source revision', experiment.get('source_revision')),
-        ('Report schema', report['schema_version']),
-    ]
-    lines.extend(markdown_table(('Item', 'Value'), summary_rows))
-    lines.extend(['', '**Recordings**', ''])
-    lines.extend(
-        markdown_table(
-            ('Bag', 'Recorded duration'),
-            [
-                (bag['path'], seconds_text(bag.get('duration_seconds')))
-                for bag in experiment['bags']
-            ],
-        )
-    )
-    if experiment['evaluation_mode'] == 'unlabeled':
-        lines.extend(
-            [
-                '',
-                '> This was an unlabeled evaluation. Detection counts and '
-                'configuration agreement describe replay behavior only; they are '
-                'not accuracy measurements.',
-            ]
-        )
-
-    lines.extend(['', '## Overall results', ''])
-    execution_rows = [
-        ('Expected executions', overall['executions_expected']),
-        ('Completed executions', overall['executions_completed']),
-        ('Failed executions', overall['executions_failed']),
-        ('Invalid executions', overall['executions_invalid']),
-    ]
-    lines.extend(markdown_table(('Metric', 'Result'), execution_rows))
-    lines.extend(['', '### Overall behavior and latency', ''])
-    lines.extend(markdown_table(('Metric', 'Result'), metric_rows(overall)))
-
-    comparisons = report.get('configuration_comparisons', [])
+def append_configuration_comparisons(
+    lines: list[str], comparisons: list[dict[str, Any]]
+) -> None:
+    """Append pairwise experiment comparison tables."""
     lines.extend(['', '## Configuration comparisons', ''])
     if not comparisons:
         lines.append('No pairwise configuration comparison was available.')
@@ -2829,8 +2778,86 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                 )
             )
 
+
+def append_execution_details(
+    lines: list[str], execution: dict[str, Any]
+) -> None:
+    """Append one execution's metrics, decisions, and truth details."""
+    bag_name = Path(execution['bag']).name
+    lines.extend(
+        [
+            '',
+            f'#### Run: {bag_name} (trial {execution["trial"]})',
+            '',
+        ]
+    )
+    run_rows = [
+        ('Status', execution['status']),
+        ('Started (UTC)', execution['started_at_utc']),
+        ('Finished (UTC)', execution.get('finished_at_utc')),
+        (
+            'Recorded bag duration',
+            seconds_text(execution.get('bag_duration_seconds')),
+        ),
+    ]
+    lines.extend(markdown_table(('Item', 'Value'), run_rows))
+    lines.extend(['', '**Run metrics**', ''])
+    lines.extend(
+        markdown_table(
+            ('Metric', 'Result'),
+            metric_rows(execution.get('metrics', {})),
+        )
+    )
+    decisions = execution.get('final_decisions', [])
+    if isinstance(decisions, list) and decisions:
+        decision_rows = [
+            (
+                index,
+                decision.get('anomaly'),
+                decision.get('severity'),
+                decision.get('action'),
+                seconds_text(decision.get('model_latency_seconds')),
+                '<br>'.join(
+                    f'{message_index}. {message}'
+                    for message_index, message in enumerate(
+                        decision.get('error_context_messages', []),
+                        start=1,
+                    )
+                )
+                or None,
+                decision.get('summary'),
+                decision.get('artifact_api_response'),
+            )
+            for index, decision in enumerate(decisions, start=1)
+            if isinstance(decision, dict)
+        ]
+        lines.extend(['', '**LLM decisions**', ''])
+        lines.extend(
+            markdown_table(
+                (
+                    '#',
+                    'Anomaly',
+                    'Severity',
+                    'Action',
+                    'Model latency',
+                    'Error messages analyzed',
+                    'Summary',
+                    'Original LLM response',
+                ),
+                decision_rows,
+            )
+        )
+    append_messages(lines, 'Warnings', execution.get('warnings'))
+    append_messages(lines, 'Errors', execution.get('errors'))
+    render_ground_truth(lines, execution.get('ground_truth'))
+
+
+def append_configuration_details(
+    lines: list[str], configurations: list[dict[str, Any]]
+) -> None:
+    """Append configuration, repeatability, and per-run details."""
     lines.extend(['', '## Configuration details'])
-    for configuration in report['configurations']:
+    for configuration in configurations:
         lines.extend(['', f'### {configuration["name"]}', ''])
         randomization = configuration.get('randomization')
         if isinstance(randomization, dict):
@@ -2977,73 +3004,74 @@ def render_report_markdown(report: dict[str, Any]) -> str:
                 )
             )
         for execution in configuration['executions']:
-            bag_name = Path(execution['bag']).name
-            lines.extend(
-                [
-                    '',
-                    f'#### Run: {bag_name} (trial {execution["trial"]})',
-                    '',
-                ]
-            )
-            run_rows = [
-                ('Status', execution['status']),
-                ('Started (UTC)', execution['started_at_utc']),
-                ('Finished (UTC)', execution.get('finished_at_utc')),
-                (
-                    'Recorded bag duration',
-                    seconds_text(execution.get('bag_duration_seconds')),
-                ),
+            append_execution_details(lines, execution)
+
+
+def render_report_markdown(report: dict[str, Any]) -> str:
+    """Render a detailed Markdown report from structured evaluation results."""
+    experiment = report['experiment']
+    overall = report['overall']
+    status = str(experiment['run_status']).replace('_', ' ').title()
+    lines = [
+        '# Offline Anomaly-Detection Evaluation',
+        '',
+        f'**Status:** {status}',
+        '',
+    ]
+    append_report_overview(lines, report)
+    lines.extend(['## Experiment summary', ''])
+    execution_count = (
+        f'{experiment["attempted_executions"]} attempted / '
+        f'{experiment["expected_executions"]} expected'
+    )
+    summary_rows = [
+        ('Mode', experiment['evaluation_mode']),
+        ('Started (UTC)', experiment['started_at_utc']),
+        ('Finished (UTC)', experiment.get('finished_at_utc')),
+        ('Playback rate', f'{experiment["playback_rate"]}×'),
+        ('Semantic LLM judging', experiment.get('semantic_judge_enabled', False)),
+        ('Executions', execution_count),
+        ('Configuration file', experiment['evaluation_yaml']),
+        ('Recordings location', experiment['recordings_folder']),
+        ('Source revision', experiment.get('source_revision')),
+        ('Report schema', report['schema_version']),
+    ]
+    lines.extend(markdown_table(('Item', 'Value'), summary_rows))
+    lines.extend(['', '**Recordings**', ''])
+    lines.extend(
+        markdown_table(
+            ('Bag', 'Recorded duration'),
+            [
+                (bag['path'], seconds_text(bag.get('duration_seconds')))
+                for bag in experiment['bags']
+            ],
+        )
+    )
+    if experiment['evaluation_mode'] == 'unlabeled':
+        lines.extend(
+            [
+                '',
+                '> This was an unlabeled evaluation. Detection counts and '
+                'configuration agreement describe replay behavior only; they are '
+                'not accuracy measurements.',
             ]
-            lines.extend(markdown_table(('Item', 'Value'), run_rows))
-            lines.extend(['', '**Run metrics**', ''])
-            lines.extend(
-                markdown_table(
-                    ('Metric', 'Result'),
-                    metric_rows(execution.get('metrics', {})),
-                )
-            )
-            decisions = execution.get('final_decisions', [])
-            if isinstance(decisions, list) and decisions:
-                decision_rows = [
-                    (
-                        index,
-                        decision.get('anomaly'),
-                        decision.get('severity'),
-                        decision.get('action'),
-                        seconds_text(decision.get('model_latency_seconds')),
-                        '<br>'.join(
-                            f'{message_index}. {message}'
-                            for message_index, message in enumerate(
-                                decision.get('error_context_messages', []),
-                                start=1,
-                            )
-                        )
-                        or None,
-                        decision.get('summary'),
-                        decision.get('artifact_api_response'),
-                    )
-                    for index, decision in enumerate(decisions, start=1)
-                    if isinstance(decision, dict)
-                ]
-                lines.extend(['', '**LLM decisions**', ''])
-                lines.extend(
-                    markdown_table(
-                        (
-                            '#',
-                            'Anomaly',
-                            'Severity',
-                            'Action',
-                            'Model latency',
-                            'Error messages analyzed',
-                            'Summary',
-                            'Original LLM response',
-                        ),
-                        decision_rows,
-                    )
-                )
-            append_messages(lines, 'Warnings', execution.get('warnings'))
-            append_messages(lines, 'Errors', execution.get('errors'))
-            render_ground_truth(lines, execution.get('ground_truth'))
+        )
+
+    lines.extend(['', '## Overall results', ''])
+    execution_rows = [
+        ('Expected executions', overall['executions_expected']),
+        ('Completed executions', overall['executions_completed']),
+        ('Failed executions', overall['executions_failed']),
+        ('Invalid executions', overall['executions_invalid']),
+    ]
+    lines.extend(markdown_table(('Metric', 'Result'), execution_rows))
+    lines.extend(['', '### Overall behavior and latency', ''])
+    lines.extend(markdown_table(('Metric', 'Result'), metric_rows(overall)))
+
+    append_configuration_comparisons(
+        lines, report.get('configuration_comparisons', [])
+    )
+    append_configuration_details(lines, report['configurations'])
 
     lines.extend(
         [
@@ -3395,6 +3423,39 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_execution_matrix(
+    bags: Sequence[BagInfo],
+    experiments: Sequence[Experiment],
+    settings: RunnerSettings,
+    collector: EvaluationCollector | None,
+    label_cache: dict[Path, tuple[list[dict[str, Any]], list[str]]],
+    grouped: dict[str, list[dict[str, Any]]],
+) -> bool:
+    """Execute the requested matrix and return whether it aborted early."""
+    for experiment in experiments:
+        print(f'Configuration: {experiment.name} ({experiment.config_hash[:12]})')
+        for bag in bags:
+            labels, label_warnings = label_cache.get(bag.path, ([], []))
+            for trial in range(1, experiment.trials + 1):
+                print(f'  [{trial}/{experiment.trials}] {bag.path.name}')
+                execution = execute_one(
+                    bag,
+                    experiment,
+                    trial,
+                    settings,
+                    collector,
+                    labels,
+                    label_warnings,
+                )
+                grouped[experiment.name].append(execution)
+                if execution['status'] not in {'failed', 'invalid_bag'}:
+                    continue
+                print(f"    {execution['status']}: {execution['errors']}")
+                if not settings.continue_on_error:
+                    return True
+    return False
+
+
 def run(args: argparse.Namespace) -> Path | None:
     """Resolve inputs, execute the matrix, aggregate, and write a report."""
     if args.write_example_config is not None:
@@ -3458,45 +3519,14 @@ def run(args: argparse.Namespace) -> Path | None:
     interrupted = False
 
     try:
-        for experiment in experiments:
-            print(f'Configuration: {experiment.name} ({experiment.config_hash[:12]})')
-            for bag in bags:
-                labels, label_warnings = label_cache.get(bag.path, ([], []))
-                for trial in range(1, experiment.trials + 1):
-                    print(f'  [{trial}/{experiment.trials}] {bag.path.name}')
-                    if settings.dry_run:
-                        # execute_one only uses collector after the dry-run return.
-                        dummy_collector = None
-                        execution = execute_one(
-                            bag,
-                            experiment,
-                            trial,
-                            settings,
-                            dummy_collector,  # type: ignore[arg-type]
-                            labels,
-                            label_warnings,
-                        )
-                    else:
-                        assert collector is not None
-                        execution = execute_one(
-                            bag,
-                            experiment,
-                            trial,
-                            settings,
-                            collector,
-                            labels,
-                            label_warnings,
-                        )
-                    grouped[experiment.name].append(execution)
-                    if execution['status'] in {'failed', 'invalid_bag'}:
-                        print(f"    {execution['status']}: {execution['errors']}")
-                        if not settings.continue_on_error:
-                            aborted = True
-                            break
-                if aborted:
-                    break
-            if aborted:
-                break
+        aborted = run_execution_matrix(
+            bags,
+            experiments,
+            settings,
+            collector,
+            label_cache,
+            grouped,
+        )
     except KeyboardInterrupt:
         interrupted = True
     finally:

@@ -1,10 +1,11 @@
 """Tests for exact LLM-response correlation in offline evaluation reports."""
 
+import importlib.util
+import json
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
-import importlib.util
 from pathlib import Path
-import sys
 
 from response_handler import parse_llm_response
 
@@ -189,3 +190,47 @@ def test_disabled_semantic_judge_is_not_reported_as_an_error() -> None:
     assert comparison['matched_responses'] == 1
     assert comparison['llm_judged_responses'] == 0
     assert comparison['judge_errors'] == 0
+
+
+def test_semantic_judge_caches_equivalent_response_pair(monkeypatch) -> None:
+    """Repeated and reversed comparisons should share one model judgment."""
+    requests = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return json.dumps(
+                {
+                    'message': {
+                        'content': json.dumps(
+                            {'consistent': True, 'rationale': 'same outcome'}
+                        )
+                    }
+                }
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(OFFLINE_EVALUATION, 'urlopen', fake_urlopen)
+    judge = OFFLINE_EVALUATION.ollama_response_judge(
+        {
+            'llm': {
+                'local': True,
+                'model': 'test-model',
+                'ollama_host': 'http://localhost:11434',
+            }
+        }
+    )
+    assert judge is not None
+
+    assert judge('left', 'right')['consistent'] is True
+    assert judge('right', 'left')['consistent'] is True
+    assert len(requests) == 1
