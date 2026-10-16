@@ -1,4 +1,8 @@
 __pycache__/
+.venv/
+.vscode/
+log/
+.pytest_cache/
 .env
 logs/*
 system_evaluation/bags/

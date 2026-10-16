@@ -36,12 +36,12 @@ The declaration of the custom message type that the anomaly detection system exp
 ### ./tester
 Provides utility nodes such as: `fake_camera_data` and `lidar_test_node`. Both publish fake data and may be used to test dataflow in the system without external node access. Run with `ros2 run tester <NODE>`.
 
-### ./scripts
+### ./system_evaluation/scripts
 Standalone utility scripts that operate outside the ROS2 graph (not built/installed as part of any package).
 
 `extract_anomaly_bag.py` reads a recorded `.mcap` bag of `AnomalyMsg` records and writes a self-contained report: `messages.json`, `messages.csv`, `summary.json`, extracted images under `images/`, and a searchable/filterable `index.html`. The HTML report also supports bag metadata, per-message labels, time-range labels, browser autosave, and JSON annotation import/export. It works locally without a server. Run with:
 ```
-python3 scripts/extract_anomaly_bag.py path/to/bag.mcap [-o output_dir]
+python3 system_evaluation/scripts/extract_anomaly_bag.py path/to/bag.mcap [-o output_dir]
 ```
 
 The export button downloads `<bag-stem>.annotations.json`. Keep that sidecar beside
@@ -68,7 +68,7 @@ read-only. In-progress edits are keyed to the report path and bag name in browse
 Annotation files use `schema_version: 1`. Nanosecond timestamps are the primary
 message identity, with topic and node name disambiguating them and message index
 retained as useful provenance. The formal format is documented by
-[`docs/anomaly_annotations.schema.json`](docs/anomaly_annotations.schema.json).
+[`system_evaluation/schemas/anomaly_annotations.schema.json`](system_evaluation/schemas/anomaly_annotations.schema.json).
 
 ### ./anomaly_detection
 The ROS2 node declaration for the anomaly detection system. 
@@ -97,7 +97,7 @@ Each trigger script runs as its own ROS node and publishes to the `config.yaml:t
 A script is provided for replaying recorded bags against one or more experiments. The shared detector configuration and experiment-specific system prompts are declared in `system_evaluation/offline_evaluation.yaml`:
 
 ```
-./src/anomaly_detection/scripts/run_offline_evaluation.py \
+./src/anomaly_detection/system_evaluation/scripts/run_offline_evaluation.py \
   --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml
 ```
 
@@ -107,18 +107,41 @@ A script is provided for replaying recorded bags against one or more experiments
 - Add or change an experiment prompt through `experiments[].overrides.llm.system_prompt`
 - Run the script from the `dev_ws/` directory; otherwise it will be unable to start `anomaly_detection_node`
 
-### Dataset Outline
+### Evaluation annotations
 
-The dataset is a `.csv` file (`dataset_outline.csv`) with one row per scenario. Fields:
+Human-labeled evaluation reads the schema-v1 `<bag-stem>.annotations.json`
+sidecar stored beside each `.mcap` file. Set `runner.mode: human-labeled` in
+`offline_evaluation.yaml`; no label topic or dataset CSV is required. The
+evaluator validates `bag.anomalous`, scores anomaly ranges and per-message
+anomaly labels, and records the annotation filename in the report.
 
-| Field | Values |
-|---|---|
-| Anomaly Category | Normal, Dynamic obstacle, Static obstacle, Mechanical issue, Sensor issue, Unauthorized access, Route issue |
-| Description | Additional detail about the anomaly |
-| Anomalous | Yes / No |
-| Bag file | Name of the associated `.mcap` bag file |
+For a ROS bag directory containing `metadata.yaml`, keep the sidecar beside its
+`.mcap` data file inside that directory. Standalone `.mcap` files use the same
+layout shown in the annotation workflow above.
 
-Store all bag files in the `bags/` folder inside `dev_ws/`.
+### Reading evaluation reports
+
+The Markdown report is a compact comparison view. A positive decision is a
+model response with `anomaly: true`; immediate safety decisions are counted
+separately because they do not have an original model response. Model latency
+appears only for captured model responses, and unlabeled-mode agreement is not
+ground-truth accuracy. When semantic judging is enabled, semantic agreement
+allows wording changes but flags conflicting anomaly, severity, action, or
+evidence claims. Unparseable decisions have no usable boolean anomaly value.
+
+Each Markdown report has a same-named JSON companion containing full responses,
+error context, detailed metrics, warnings, and event diagnostics.
+
+The evaluator uses the dedicated `runner.ros_domain_id` from
+`offline_evaluation.yaml`, rejects pre-existing detector endpoints in that
+domain, and counts detector callbacks only during the active replay window. For
+local Ollama configurations it verifies that the model is installed and sends a
+one-token warm-up request before replay. Drain limits are calculated from the
+model timeout and allowed serial passes. If a run fails, reaches any timeout, or
+records a backend error, its detector and bag-player logs are retained in a
+same-timestamp `_logs` directory beside the report. Timeout stages remain
+separate in the detailed JSON instead of being collapsed into one generic
+timeout.
 
 ## Artifact Generation
 
@@ -172,7 +195,7 @@ Export the referenced key before launching the evaluator:
 
 ```bash
 export ANTHROPIC_API_KEY='...'
-python3 scripts/run_offline_evaluation.py \
+python3 system_evaluation/scripts/run_offline_evaluation.py \
   --config system_evaluation/offline_evaluation.yaml
 ```
 

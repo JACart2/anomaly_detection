@@ -1,4 +1,4 @@
-"""Generate the self-contained anomaly bag annotation report."""
+"""Generate the self-contained offline-evaluation annotation report."""
 
 from __future__ import annotations
 

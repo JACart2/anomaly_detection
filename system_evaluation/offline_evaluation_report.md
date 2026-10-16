@@ -1,6 +1,6 @@
 # Offline Evaluation Report
 
-This report pulls together the current offline replay setup from [run_offline_evaluation.py](../scripts/run_offline_evaluation.py) and [offline_evaluation.yaml](offline_evaluation.yaml). The point here is not the code path itself, but the shape of the evaluation: which knobs exist, how they change the replay, and what the current experiment is actually testing.
+This report pulls together the current offline replay setup from [run_offline_evaluation.py](scripts/run_offline_evaluation.py) and [offline_evaluation.yaml](offline_evaluation.yaml). The point here is not the code path itself, but the shape of the evaluation: which knobs exist, how they change the replay, and what the current experiment is actually testing.
 
 ## Configuration Surface
 
@@ -16,20 +16,24 @@ These settings control the replay session itself:
 - `trials`: how many repeats to run for each bag and experiment
 - `playback_rate`: replay speed, with `1.0` preserving recorded timing
 - `continue_on_error`: whether the matrix keeps going after a failure
+- `ros_domain_id`: the dedicated ROS domain shared only by the evaluator, its detector, and its bag player
 - `startup_timeout_seconds`: how long the detector gets to come up
 - `startup_grace_seconds`: a short grace period after startup
 - `playback_timeout_padding_seconds`: extra time added on top of the recorded duration
 - `post_playback_grace_seconds`: quiet time after playback ends
-- `inference_drain_timeout_seconds`: how long to wait for pending model activity to finish
+- `inference_drain_timeout_seconds`: minimum time to wait for pending model activity
+- `inference_drain_model_passes`: serial model passes allowed when calculating the effective drain limit
 - `shutdown_timeout_seconds`: how long to wait for the detector process to stop cleanly
+- `graph_clean_timeout_seconds`: how long stale ROS discovery entries may take to disappear before the run is rejected as contaminated
+- `model_preflight_enabled`: verify and warm a local Ollama model before replay
+- `model_preflight_timeout_seconds`: maximum time for the preflight warm-up request
+- `label_buffer_seconds`: allowed timing margin around sidecar point/range labels
 - `semantic_judge_enabled`: whether final comparisons may make additional model calls to judge response summaries
 - `decision_topic`: detector decision topic, defaulting to `/aad/decisions`
 - `alert_topic`: alert topic, defaulting to `/aad/alerts`
 - `llm_called_topic`: LLM-call topic, defaulting to `/aad/llm_called`
 - `formatted_topic`: recorded formatted-message topic excluded from playback, defaulting to `/aad/formatted_messages`
 - `detector_command`: the command used to launch the anomaly detector node
-- `human_label_topic`: required when running in human-labeled mode
-- `human_label_positive_regex`: optional filter for label messages in human-labeled mode
 - `dry_run`: validate the setup without replaying the bag
 
 The quick-run block in the Python file adds only launch conveniences:
@@ -62,48 +66,52 @@ The replay flow is fairly direct once the settings are resolved.
 1. The YAML file is loaded and merged with any command-line overrides.
 2. The shared detector config is read, then each experiment's system prompt is layered on top.
 3. The bag path is resolved and discovered.
-4. A fresh runtime config is written to a temporary location for each run.
-5. The detector is started with that isolated config.
-6. The bag is replayed at the requested playback rate.
-7. The collector watches detector decisions, alerts, and LLM-call notifications while the replay runs.
-8. After the bag finishes, the runner waits for the detector to go quiet, then captures the final state and writes the report.
+4. The evaluator enters its dedicated ROS domain and rejects unexpected detector publishers or subscribers.
+5. A local Ollama endpoint is checked for the configured model and warmed with a one-token request.
+6. A fresh runtime config is written to a temporary location for each run.
+7. The detector is started with that isolated config.
+8. The collector opens a run-specific accounting window and the bag is replayed at the requested rate.
+9. After playback, the runner uses the larger of the configured drain minimum or `(model timeout × model passes) + shutdown margin`.
+10. Timeout stages are recorded separately. Failed, timed-out, and backend-error runs retain detector and player logs beside the report.
 
 That gives the evaluation a clean data path: bag in, resolved config in, detector output out, report at the end.
 
 ## What The Current Experiment Is Testing
 
-The current YAML selects one bag folder and compares four experiment variants declared in that same file.
+The current YAML selects one bag folder and compares two experiment variants declared in that same file.
 
 The active experiments are:
 
 - `local-baseline`
 - `local-golf-cart`
-- `local-production-prompt-long-context`
-- `local-evidence-first-randomized` (reported as `local-evidence-first-randomized__sample_1`)
 
-All four inherit the same detector configuration. The first two override the system prompt, while the third deliberately retains the production prompt. The first three use these fixed parameter combinations:
+Both inherit the same detector configuration and override the system prompt. They use these fixed parameter combinations:
 
 | Experiment | `num_ctx` | `num_predict` | `image_jpeg_quality` |
 |---|---:|---:|---:|
 | `local-baseline` | 2048 | 192 | 65 |
 | `local-golf-cart` | 3072 | 256 | 75 |
-| `local-production-prompt-long-context` | 4096 | 320 | 85 |
 
-The fourth profile uses an evidence-first safety prompt and reproducibly samples one combination of the same three parameters using seed `20260923`.
+The YAML also includes a commented example for reproducibly sampling randomized LLM parameters.
 
 ## What The Report Is Supposed To Answer
 
-Because the current run is unlabeled, the report stays in behavior-and-agreement territory instead of pretending to measure ground-truth accuracy.
+The current run is human-labeled. It reads the adjacent
+`<bag-stem>.annotations.json` sidecar and reports event precision, recall, F1,
+bag accuracy, behavior, latency, and agreement.
 
 That makes the output useful for questions like:
 
-- Did the four configurations produce similar decision patterns?
+- Did the two configurations produce similar decision patterns?
 - How much latency did the detector show during replay?
 - How many alerts and positive decisions came out of each run?
 - Did any run leave LLM calls pending when the bag stopped?
+- Which detections matched the labeled anomaly ranges and message points?
 
 The report is also set up to preserve run-by-run detail, so the final markdown is not just an aggregate summary. It keeps the configuration details, the per-run metrics, and the pairwise comparison between experiments.
 
 ## Plain Summary
 
-The short version is that this evaluation replays one recorded driving session through four configurations and compares their output behavior and latency. The first three test progressively larger context, output, and image-quality settings; the third keeps the production prompt, while the fourth uses a custom prompt and one reproducibly randomized parameter set.
+The short version is that this evaluation replays one annotated driving session
+through two configurations and compares their accuracy, behavior, and latency.
+They use different prompts and context, output, and image-quality settings.

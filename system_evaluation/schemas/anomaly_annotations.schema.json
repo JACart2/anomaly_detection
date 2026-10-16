@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/JACart2/anomaly_detection/blob/main/docs/anomaly_annotations.schema.json",
+  "$id": "https://github.com/JACart2/anomaly_detection/blob/main/system_evaluation/schemas/anomaly_annotations.schema.json",
   "title": "JACart anomaly annotations",
   "description": "Ground-truth metadata, time ranges, and message annotations for one ROS bag.",
   "type": "object",

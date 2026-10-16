@@ -2,7 +2,7 @@
 
 ## Status
 
-Initial implementation is available at `scripts/run_offline_evaluation.py`.
+Initial implementation is available at `system_evaluation/scripts/run_offline_evaluation.py`.
 
 The current implementation includes the terminal and IDE quick-run workflows, YAML experiment resolution, recursive bag discovery, isolated sequential replay, detector readiness checks, artifact and decision capture, unlabeled metrics, human-labeled matching, cross-configuration agreement, and a timestamped human-readable Markdown report. Further project decisions and enhancements remain tracked below.
 
@@ -109,14 +109,14 @@ run_offline_evaluation \
 A starter YAML can be generated without maintaining a second checked-in template:
 
 ```text
-python3 scripts/run_offline_evaluation.py \
+python3 system_evaluation/scripts/run_offline_evaluation.py \
   --write-example-config offline_evaluation.yaml
 ```
 
 Configuration and bag discovery can then be checked without starting a detector or calling an LLM:
 
 ```text
-python3 scripts/run_offline_evaluation.py \
+python3 system_evaluation/scripts/run_offline_evaluation.py \
   --config offline_evaluation.yaml \
   --dry-run
 ```
@@ -124,7 +124,7 @@ python3 scripts/run_offline_evaluation.py \
 The Python file should also be directly executable:
 
 ```text
-python3 run_offline_evaluation.py \
+python3 system_evaluation/scripts/run_offline_evaluation.py \
   --bags /path/to/recordings \
   --config /path/to/offline_evaluation.yaml \
   --mode human-labeled

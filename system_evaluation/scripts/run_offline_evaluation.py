@@ -10,6 +10,8 @@ The runner supports two workflows:
 Experiment options live in YAML. For every bag/configuration/trial combination,
 the script creates an isolated resolved AAD configuration, starts a clean node,
 replays the bag, collects decisions, and writes a detailed Markdown report.
+Human-labeled mode reads schema-v1 ``*.annotations.json`` files stored beside
+their bags; it does not require a label topic in the recording.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import random
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import statistics
 import subprocess
@@ -106,8 +109,6 @@ try:
     import rosbag2_py
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from rclpy.serialization import deserialize_message
-    from rosidl_runtime_py.utilities import get_message
     from std_msgs.msg import Bool, String
 except ImportError as exc:
     ROS_IMPORT_ERROR: ImportError | None = exc
@@ -135,14 +136,15 @@ QUICK_RUN_BAG_LOCATION = '/root/dev_ws/src/anomaly_detection/system_evaluation/b
 QUICK_RUN_CONFIG = (
     '/root/dev_ws/src/anomaly_detection/system_evaluation/offline_evaluation.yaml'
 )
-QUICK_RUN_MODE = 'unlabeled'  # 'unlabeled' or 'human-labeled'
+QUICK_RUN_MODE = 'human-labeled'  # Uses adjacent *.annotations.json sidecars.
 QUICK_RUN_OUTPUT_DIRECTORY = (
     '/root/dev_ws/src/anomaly_detection/system_evaluation/results'
 )
 
 
 NS_PER_SECOND = 1_000_000_000
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 13
+ANNOTATION_SCHEMA_VERSION = 1
 DEFAULT_DECISION_TOPIC = '/aad/decisions'
 DEFAULT_ALERT_TOPIC = '/aad/alerts'
 DEFAULT_LLM_CALLED_TOPIC = '/aad/llm_called'
@@ -170,6 +172,21 @@ ARTIFACT_FILE_PATTERN = re.compile(r'^api_artifact_(?P<timestamp>\d+)\.json$')
 
 class EvaluationError(RuntimeError):
     """Expected configuration, environment, or execution failure."""
+
+
+class EvaluationStageError(EvaluationError):
+    """Expected failure attributed to one evaluator lifecycle stage."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str,
+        limit_seconds: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.limit_seconds = limit_seconds
 
 
 class EvaluationInterrupted(RuntimeError):
@@ -212,12 +229,17 @@ class RunnerSettings:
     output_directory: Path
     provider_config_path: Path | None
     playback_rate: float
+    ros_domain_id: int
     startup_timeout_seconds: float
     startup_grace_seconds: float
     playback_timeout_padding_seconds: float
     inference_drain_timeout_seconds: float
+    inference_drain_model_passes: int
     post_playback_grace_seconds: float
     shutdown_timeout_seconds: float
+    graph_clean_timeout_seconds: float
+    model_preflight_enabled: bool
+    model_preflight_timeout_seconds: float
     label_buffer_seconds: float
     semantic_judge_enabled: bool
     continue_on_error: bool
@@ -226,8 +248,6 @@ class RunnerSettings:
     alert_topic: str
     llm_called_topic: str
     formatted_topic: str
-    human_label_topic: str | None
-    human_label_positive_regex: str | None
     dry_run: bool
 
 
@@ -469,6 +489,21 @@ def positive_integer(name: str, value: Any) -> int:
         raise EvaluationError(f'{name} must be a positive integer.') from exc
     if parsed <= 0 or parsed != value:
         raise EvaluationError(f'{name} must be a positive integer.')
+    return parsed
+
+
+def ros_domain_id(value: Any) -> int:
+    """Validate a ROS 2 domain ID accepted by common DDS implementations."""
+    if isinstance(value, bool):
+        raise EvaluationError('runner.ros_domain_id must be an integer from 0 to 232.')
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise EvaluationError(
+            'runner.ros_domain_id must be an integer from 0 to 232.'
+        ) from exc
+    if parsed != value or not 0 <= parsed <= 232:
+        raise EvaluationError('runner.ros_domain_id must be an integer from 0 to 232.')
     return parsed
 
 
@@ -794,13 +829,6 @@ def resolve_settings(
     if mode not in {'unlabeled', 'human-labeled'}:
         raise EvaluationError('mode must be unlabeled or human-labeled.')
 
-    label_topic_value = yaml_runner.get('human_label_topic')
-    label_topic = str(label_topic_value).strip() if label_topic_value else None
-    if mode == 'human-labeled' and not label_topic:
-        raise EvaluationError(
-            'human-labeled mode requires runner.human_label_topic in YAML.'
-        )
-
     detector_command = command_value(
         yaml_runner.get(
             'detector_command',
@@ -812,6 +840,11 @@ def resolve_settings(
     )
     if semantic_judge_enabled is None:
         raise EvaluationError('runner.semantic_judge_enabled must be boolean.')
+    model_preflight_enabled = coerce_bool(
+        yaml_runner.get('model_preflight_enabled', True)
+    )
+    if model_preflight_enabled is None:
+        raise EvaluationError('runner.model_preflight_enabled must be boolean.')
     return RunnerSettings(
         mode=mode,
         bags_path=bags_path,
@@ -820,6 +853,7 @@ def resolve_settings(
         playback_rate=positive_number(
             'runner.playback_rate', yaml_runner.get('playback_rate', 1.0)
         ),
+        ros_domain_id=ros_domain_id(yaml_runner.get('ros_domain_id', 42)),
         startup_timeout_seconds=positive_number(
             'runner.startup_timeout_seconds',
             yaml_runner.get('startup_timeout_seconds', 15.0),
@@ -836,7 +870,11 @@ def resolve_settings(
         ),
         inference_drain_timeout_seconds=positive_number(
             'runner.inference_drain_timeout_seconds',
-            yaml_runner.get('inference_drain_timeout_seconds', 60.0),
+            yaml_runner.get('inference_drain_timeout_seconds', 180.0),
+        ),
+        inference_drain_model_passes=positive_integer(
+            'runner.inference_drain_model_passes',
+            yaml_runner.get('inference_drain_model_passes', 2),
         ),
         post_playback_grace_seconds=positive_number(
             'runner.post_playback_grace_seconds',
@@ -846,6 +884,16 @@ def resolve_settings(
         shutdown_timeout_seconds=positive_number(
             'runner.shutdown_timeout_seconds',
             yaml_runner.get('shutdown_timeout_seconds', 20.0),
+        ),
+        graph_clean_timeout_seconds=positive_number(
+            'runner.graph_clean_timeout_seconds',
+            yaml_runner.get('graph_clean_timeout_seconds', 5.0),
+            allow_zero=True,
+        ),
+        model_preflight_enabled=model_preflight_enabled,
+        model_preflight_timeout_seconds=positive_number(
+            'runner.model_preflight_timeout_seconds',
+            yaml_runner.get('model_preflight_timeout_seconds', 120.0),
         ),
         label_buffer_seconds=positive_number(
             'runner.label_buffer_seconds',
@@ -862,12 +910,6 @@ def resolve_settings(
         ),
         formatted_topic=str(
             yaml_runner.get('formatted_topic', DEFAULT_FORMATTED_TOPIC)
-        ),
-        human_label_topic=label_topic,
-        human_label_positive_regex=(
-            str(yaml_runner['human_label_positive_regex'])
-            if yaml_runner.get('human_label_positive_regex')
-            else None
         ),
         dry_run=bool(args.dry_run),
     )
@@ -953,117 +995,235 @@ def inspect_bag(path: Path) -> BagInfo:
         )
 
 
-def scalar_message_text(message: Any) -> str:
-    """Extract common textual ROS fields without expanding images or bytes."""
-    for name in ('data', 'msg', 'message', 'payload', 'label'):
-        value = getattr(message, name, None)
-        if isinstance(value, str) and value.strip():
-            return value
-    return ''
+def annotation_path_for_bag(path: Path) -> Path:
+    """Resolve the annotation sidecar stored beside a standalone or split bag."""
+    if path.is_file():
+        return path.with_name(f'{path.stem}.annotations.json')
 
-
-def message_header_time(message: Any) -> int | None:
-    """Read a nonzero ROS Header timestamp."""
-    try:
-        value = int(message.header.stamp.sec) * NS_PER_SECOND
-        value += int(message.header.stamp.nanosec)
-    except (AttributeError, TypeError, ValueError):
-        return None
-    return value or None
-
-
-def mapping_timestamp_ns(payload: dict[str, Any]) -> int | None:
-    """Read common label timestamp keys from JSON."""
-    for key in (
-        'label_timestamp_ns',
-        'event_timestamp_ns',
-        'source_timestamp_ns',
-        'timestamp_ns',
-    ):
-        value = payload.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-        if isinstance(value, str) and value.strip().lstrip('-').isdigit():
-            return int(value)
-    for key in ('label_timestamp', 'event_timestamp', 'source_timestamp', 'timestamp'):
-        value = payload.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return int(round(float(value) * NS_PER_SECOND))
-        if isinstance(value, str):
-            match = re.fullmatch(r'(-?\d+)(?:\.(\d{1,9}))?', value.strip())
-            if match:
-                return decimal_timestamp_ns(match.group(1), match.group(2))
-    return None
-
-
-def extract_human_labels(
-    bag: BagInfo,
-    topic: str,
-    positive_regex: str | None,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Extract timestamped positive truth markers before replay."""
-    if topic not in bag.topics:
-        return [], [f'Required human-label topic {topic!r} is missing.']
-    try:
-        message_class = get_message(bag.topics[topic])
-    except Exception as exc:
-        return [], [f'Cannot load label type {bag.topics[topic]!r}: {exc}']
-    try:
-        pattern = re.compile(positive_regex, re.IGNORECASE) if positive_regex else None
-    except re.error as exc:
-        raise EvaluationError(f'Invalid human_label_positive_regex: {exc}') from exc
-
-    reader = rosbag2_py.SequentialReader()
-    reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag.path), storage_id='mcap'),
-        rosbag2_py.ConverterOptions(
-            input_serialization_format='cdr', output_serialization_format='cdr'
-        ),
+    mcap_candidates = sorted(path.glob('*.mcap'))
+    expected = [
+        mcap.with_name(f'{mcap.stem}.annotations.json') for mcap in mcap_candidates
+    ]
+    expected.append(path / f'{path.name}.annotations.json')
+    expected.append(path.parent / f'{path.name}.annotations.json')
+    matches = list(
+        dict.fromkeys(candidate for candidate in expected if candidate.is_file())
     )
-    reader.set_filter(rosbag2_py.StorageFilter(topics=[topic]))
-    labels: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    index = 0
-    while reader.has_next():
-        _, serialized, record_ns = reader.read_next()
-        index += 1
-        try:
-            message = deserialize_message(serialized, message_class)
-        except Exception as exc:
-            warnings.append(f'Could not decode label message #{index}: {exc}')
-            continue
-        text = scalar_message_text(message)
-        payload = parse_json_object(text)
-        explicit = anomaly_value(payload if payload is not None else text)
-        if pattern is not None and pattern.search(text) is None:
-            continue
-        if explicit is False:
-            continue
-        # A dedicated label topic treats messages without an explicit boolean
-        # as positive markers; a regex may narrow that behavior when required.
-        timestamp = mapping_timestamp_ns(payload) if payload is not None else None
-        source = 'label_json'
-        if timestamp is None:
-            embedded = embedded_timestamps(text)
-            timestamp = embedded[0] if embedded else None
-            source = 'label_message[t]'
-        if timestamp is None:
-            timestamp = message_header_time(message)
-            source = 'label_header'
-        if timestamp is None:
-            timestamp = int(record_ns)
-            source = 'label_bag_record_fallback'
-            warnings.append(f'Label #{index} uses its bag-record timestamp.')
-        labels.append(
-            {
-                'id': f'{bag.path.name}:label:{index}',
-                'timestamp_ns': timestamp,
-                'timestamp_source': source,
-                'record_timestamp_ns': int(record_ns),
-                'raw': text,
-            }
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise EvaluationError(
+            f'Multiple annotation sidecars match bag {path}: '
+            + ', '.join(str(candidate) for candidate in matches)
         )
-    return labels, warnings
+
+    direct = sorted(path.glob('*.annotations.json'))
+    if len(direct) == 1:
+        return direct[0]
+    if len(direct) > 1:
+        raise EvaluationError(
+            f'Multiple annotation sidecars are present in {path}: '
+            + ', '.join(str(candidate) for candidate in direct)
+        )
+    return expected[0] if mcap_candidates else expected[-2]
+
+
+def annotation_timestamp(
+    value: Any, field_name: str, errors: list[str]
+) -> int | None:
+    """Validate one schema-v1 nanosecond timestamp without losing precision."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        errors.append(f'{field_name} must be a non-negative integer.')
+        return None
+    return value
+
+
+def annotation_interval(label: dict[str, Any]) -> tuple[int, int]:
+    """Return the inclusive time interval represented by a truth label."""
+    timestamp = int(label['timestamp_ns'])
+    return (
+        int(label.get('start_timestamp_ns', timestamp)),
+        int(label.get('end_timestamp_ns', timestamp)),
+    )
+
+
+def load_annotation_ground_truth(bag: BagInfo) -> dict[str, Any]:
+    """Load and validate the schema-v1 annotation sidecar adjacent to a bag."""
+    warnings: list[str] = []
+    errors: list[str] = []
+    try:
+        path = annotation_path_for_bag(bag.path)
+    except EvaluationError as exc:
+        return {
+            'source': None,
+            'bag_anomalous': None,
+            'labels': [],
+            'ignored_intervals': [],
+            'warnings': warnings,
+            'errors': [str(exc)],
+        }
+    if not path.is_file():
+        return {
+            'source': str(path),
+            'bag_anomalous': None,
+            'labels': [],
+            'ignored_intervals': [],
+            'warnings': warnings,
+            'errors': [f'Required annotation sidecar is missing: {path}'],
+        }
+    try:
+        document = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            'source': str(path),
+            'bag_anomalous': None,
+            'labels': [],
+            'ignored_intervals': [],
+            'warnings': warnings,
+            'errors': [f'Could not read annotation sidecar {path}: {exc}'],
+        }
+    if not isinstance(document, dict):
+        errors.append('Annotation document must be a JSON object.')
+        document = {}
+    if document.get('schema_version') != ANNOTATION_SCHEMA_VERSION:
+        errors.append(
+            f'Expected annotation schema_version {ANNOTATION_SCHEMA_VERSION}.'
+        )
+
+    bag_metadata = document.get('bag')
+    if not isinstance(bag_metadata, dict):
+        errors.append('bag must be an object.')
+        bag_metadata = {}
+    annotated_file = bag_metadata.get('file')
+    valid_names = {bag.path.name}
+    if bag.path.is_dir():
+        valid_names.update(mcap.name for mcap in bag.path.glob('*.mcap'))
+    if not isinstance(annotated_file, str) or not annotated_file.strip():
+        errors.append('bag.file must be a non-empty string.')
+    elif Path(annotated_file).name not in valid_names:
+        errors.append(
+            f'Annotation bag.file {annotated_file!r} does not match {bag.path}.'
+        )
+    bag_anomalous = bag_metadata.get('anomalous')
+    if not isinstance(bag_anomalous, bool):
+        errors.append(
+            'bag.anomalous must be true or false before the sidecar can be evaluated.'
+        )
+        bag_anomalous = None
+
+    ranges = document.get('ranges')
+    annotations = document.get('annotations')
+    if not isinstance(ranges, list):
+        errors.append('ranges must be an array.')
+        ranges = []
+    if not isinstance(annotations, list):
+        errors.append('annotations must be an array.')
+        annotations = []
+
+    labels: list[dict[str, Any]] = []
+    ignored_intervals: list[dict[str, Any]] = []
+    for index, item in enumerate(ranges):
+        field = f'ranges[{index}]'
+        if not isinstance(item, dict):
+            errors.append(f'{field} must be an object.')
+            continue
+        start = annotation_timestamp(
+            item.get('start_timestamp_ns'), f'{field}.start_timestamp_ns', errors
+        )
+        end = annotation_timestamp(
+            item.get('end_timestamp_ns'), f'{field}.end_timestamp_ns', errors
+        )
+        if start is None or end is None:
+            continue
+        if end < start:
+            errors.append(f'{field} ends before it starts.')
+            continue
+        label = item.get('label')
+        if label not in {'unlabeled', 'normal', 'anomaly', 'uncertain', 'ignore'}:
+            errors.append(f'{field}.label is invalid: {label!r}.')
+            continue
+        record = {
+            'id': f'{path.name}:range:{index + 1}',
+            'timestamp_ns': start,
+            'start_timestamp_ns': start,
+            'end_timestamp_ns': end,
+            'timestamp_source': 'annotation_range',
+            'category': item.get('category', ''),
+            'description': item.get('description', ''),
+        }
+        if label == 'anomaly':
+            labels.append(record)
+        elif label in {'unlabeled', 'uncertain', 'ignore'}:
+            ignored_intervals.append(record)
+
+    anomaly_ranges = [annotation_interval(label) for label in labels]
+    for index, item in enumerate(annotations):
+        field = f'annotations[{index}]'
+        if not isinstance(item, dict):
+            errors.append(f'{field} must be an object.')
+            continue
+        timestamp = annotation_timestamp(
+            item.get('recorded_timestamp_ns'),
+            f'{field}.recorded_timestamp_ns',
+            errors,
+        )
+        if timestamp is None:
+            continue
+        label = item.get('label')
+        if label not in {'unlabeled', 'normal', 'anomaly', 'uncertain', 'ignore'}:
+            errors.append(f'{field}.label is invalid: {label!r}.')
+            continue
+        record = {
+            'id': f'{path.name}:message:{index + 1}',
+            'timestamp_ns': timestamp,
+            'timestamp_source': 'annotation_message',
+            'message_index': item.get('message_index'),
+            'topic': item.get('topic'),
+            'node_name': item.get('node_name'),
+            'category': item.get('category', ''),
+            'description': item.get('description', ''),
+        }
+        if label == 'anomaly':
+            if not any(start <= timestamp <= end for start, end in anomaly_ranges):
+                labels.append(record)
+        elif label in {'uncertain', 'ignore'}:
+            ignored_intervals.append(record)
+
+    if bag_anomalous is False and labels:
+        errors.append(
+            'bag.anomalous is false but the sidecar contains anomaly labels.'
+        )
+    if bag_anomalous is True and not labels:
+        if bag.start_ns is None or bag.end_ns is None:
+            errors.append(
+                'The anomalous bag has no anomaly ranges/messages and its time '
+                'bounds are unavailable.'
+            )
+        else:
+            labels.append(
+                {
+                    'id': f'{path.name}:bag',
+                    'timestamp_ns': bag.start_ns,
+                    'start_timestamp_ns': bag.start_ns,
+                    'end_timestamp_ns': bag.end_ns,
+                    'timestamp_source': 'annotation_bag_fallback',
+                    'category': bag_metadata.get('category', ''),
+                    'description': bag_metadata.get('description', ''),
+                }
+            )
+            warnings.append(
+                'No anomaly ranges or messages were labeled; the full anomalous '
+                'bag is treated as one truth interval.'
+            )
+    return {
+        'source': str(path),
+        'bag_anomalous': bag_anomalous,
+        'bag_metadata': bag_metadata,
+        'labels': labels,
+        'ignored_intervals': ignored_intervals,
+        'warnings': warnings,
+        'errors': errors,
+    }
 
 
 class EvaluationCollector(Node):
@@ -1075,6 +1235,7 @@ class EvaluationCollector(Node):
         self.settings = settings
         self.state = CollectorState()
         self.condition = threading.Condition()
+        self.collection_active = False
         self.create_subscription(String, settings.decision_topic, self._decision, 50)
         self.create_subscription(String, settings.alert_topic, self._alert, 50)
         self.create_subscription(Bool, settings.llm_called_topic, self._llm_called, 50)
@@ -1083,6 +1244,20 @@ class EvaluationCollector(Node):
         """Clear all run-specific state."""
         with self.condition:
             self.state = CollectorState()
+            self.collection_active = False
+            self.condition.notify_all()
+
+    def begin_collection(self) -> None:
+        """Start a fresh accounting window immediately before bag playback."""
+        with self.condition:
+            self.state = CollectorState()
+            self.collection_active = True
+            self.condition.notify_all()
+
+    def end_collection(self) -> None:
+        """Ignore late callbacks after the run snapshot has been captured."""
+        with self.condition:
+            self.collection_active = False
             self.condition.notify_all()
 
     def _touch(self) -> None:
@@ -1090,6 +1265,8 @@ class EvaluationCollector(Node):
 
     def _llm_called(self, _message: Bool) -> None:
         with self.condition:
+            if not self.collection_active:
+                return
             self._touch()
             self.state.llm_calls.append(
                 {'received_at_utc_ns': time.time_ns()}
@@ -1098,12 +1275,16 @@ class EvaluationCollector(Node):
 
     def _decision(self, message: String) -> None:
         with self.condition:
+            if not self.collection_active:
+                return
             self._touch()
             self.state.decision_messages.append(message.data)
             self.condition.notify_all()
 
     def _alert(self, _message: String) -> None:
         with self.condition:
+            if not self.collection_active:
+                return
             self._touch()
             self.state.alert_count += 1
             self.condition.notify_all()
@@ -1133,6 +1314,52 @@ class EvaluationCollector(Node):
                 if remaining <= 0:
                     return False
                 self.condition.wait(timeout=min(0.2, remaining))
+
+    @staticmethod
+    def _graph_endpoint(endpoint: Any, role: str, topic: str) -> dict[str, str]:
+        """Convert ROS graph endpoint data into stable diagnostic fields."""
+        return {
+            'role': role,
+            'topic': topic,
+            'node_name': str(getattr(endpoint, 'node_name', 'unknown')),
+            'node_namespace': str(getattr(endpoint, 'node_namespace', '/')),
+        }
+
+    def graph_contamination(self, raw_input_topic: str) -> list[dict[str, str]]:
+        """Find detector endpoints that existed before this run starts."""
+        endpoints: list[dict[str, str]] = []
+        for topic in (
+            self.settings.decision_topic,
+            self.settings.alert_topic,
+            self.settings.llm_called_topic,
+            self.settings.formatted_topic,
+        ):
+            endpoints.extend(
+                self._graph_endpoint(endpoint, 'publisher', topic)
+                for endpoint in self.get_publishers_info_by_topic(topic)
+            )
+        endpoints.extend(
+            self._graph_endpoint(endpoint, 'subscription', raw_input_topic)
+            for endpoint in self.get_subscriptions_info_by_topic(raw_input_topic)
+        )
+        endpoints.extend(
+            self._graph_endpoint(endpoint, 'publisher', raw_input_topic)
+            for endpoint in self.get_publishers_info_by_topic(raw_input_topic)
+        )
+        return endpoints
+
+    def wait_for_clean_graph(
+        self,
+        raw_input_topic: str,
+        timeout: float,
+    ) -> list[dict[str, str]]:
+        """Allow stale DDS discovery entries to clear, then return contaminants."""
+        deadline = time.monotonic() + timeout
+        while True:
+            endpoints = self.graph_contamination(raw_input_topic)
+            if not endpoints or time.monotonic() >= deadline:
+                return endpoints
+            time.sleep(0.1)
 
     def wait_for_detector_ready(
         self,
@@ -1229,22 +1456,24 @@ def minimum_cost_maximum_matching(
     }
 
 
-def stop_process(process: subprocess.Popen[Any] | None, timeout: float) -> None:
-    """Stop an isolated process group, escalating only after a timeout."""
+def stop_process(process: subprocess.Popen[Any] | None, timeout: float) -> bool:
+    """Stop a process group and return whether a forced kill was required."""
     if process is None or process.poll() is not None:
-        return
+        return False
     try:
         os.killpg(os.getpgid(process.pid), signal.SIGTERM)
     except ProcessLookupError:
-        return
+        return False
     try:
         process.wait(timeout=timeout)
+        return False
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         except ProcessLookupError:
             pass
         process.wait()
+        return True
 
 
 def read_artifacts(directory: Path) -> list[dict[str, Any]]:
@@ -1470,31 +1699,48 @@ def evaluate_ground_truth(
     decisions: list[dict[str, Any]],
     buffer_seconds: float,
     playback_rate: float,
+    ignored_intervals: list[dict[str, Any]] | None = None,
+    bag_anomalous: bool | None = None,
 ) -> dict[str, Any]:
-    """Match positive decisions to truth labels within an inclusive time window."""
+    """Match positive decisions to annotated points or inclusive time ranges."""
     positives = [decision for decision in decisions if decision.get('anomaly') is True]
     scorable: list[dict[str, Any]] = []
     unscorable: list[dict[str, Any]] = []
+    ignored: list[dict[str, Any]] = []
+    excluded = [annotation_interval(item) for item in (ignored_intervals or [])]
     for decision in positives:
-        if decision.get('source_timestamp_candidates_ns'):
-            scorable.append(decision)
-        else:
+        candidates = decision.get('source_timestamp_candidates_ns')
+        if not candidates:
             unscorable.append(decision)
+        elif excluded and all(
+            any(start <= int(candidate) <= end for start, end in excluded)
+            for candidate in candidates
+        ):
+            ignored.append(decision)
+        else:
+            scorable.append(decision)
 
     buffer_ns = int(round(buffer_seconds * NS_PER_SECOND))
     costs: dict[tuple[int, int], int] = {}
     chosen_sources: dict[tuple[int, int], int] = {}
     for label_index, label in enumerate(labels):
-        label_time = int(label['timestamp_ns'])
+        start, end = annotation_interval(label)
         for decision_index, decision in enumerate(scorable):
+            def distance_from_label(value: int) -> int:
+                if value < start:
+                    return start - value
+                if value > end:
+                    return value - end
+                return 0
+
             selected = min(
                 decision['source_timestamp_candidates_ns'],
-                key=lambda value: (abs(value - label_time), value),
+                key=lambda value: (distance_from_label(int(value)), int(value)),
             )
-            distance = abs(selected - label_time)
+            distance = distance_from_label(int(selected))
             if distance <= buffer_ns:
                 costs[(label_index, decision_index)] = distance
-                chosen_sources[(label_index, decision_index)] = selected
+                chosen_sources[(label_index, decision_index)] = int(selected)
     matches = minimum_cost_maximum_matching(len(labels), len(scorable), costs)
     matched_decisions = set(matches.values())
 
@@ -1515,6 +1761,13 @@ def evaluate_ground_truth(
         decision_index = matches[label_index]
         decision = scorable[decision_index]
         source_time = chosen_sources[(label_index, decision_index)]
+        label_start, label_end = annotation_interval(label)
+        if source_time < label_start:
+            event_difference_ns = source_time - label_start
+        elif source_time > label_end:
+            event_difference_ns = source_time - label_end
+        else:
+            event_difference_ns = 0
         observations = [
             item
             for item in decision.get('source_replay_observations', [])
@@ -1530,9 +1783,7 @@ def evaluate_ground_truth(
             processing = (
                 decision['received_monotonic_ns'] - observed_ns
             ) / NS_PER_SECOND
-            source_after_label = (
-                source_time - int(label['timestamp_ns'])
-            ) / NS_PER_SECOND
+            source_after_label = (source_time - label_start) / NS_PER_SECOND
             label_relative = processing + source_after_label / playback_rate
             processing_latencies.append(processing)
             label_latencies.append(label_relative)
@@ -1552,13 +1803,10 @@ def evaluate_ground_truth(
                 'label': label,
                 'decision': decision,
                 'selected_source_timestamp_ns': source_time,
-                'event_difference_seconds': (
-                    source_time - int(label['timestamp_ns'])
-                )
-                / NS_PER_SECOND,
+                'event_difference_seconds': event_difference_ns / NS_PER_SECOND,
                 'processing_latency_seconds': processing,
                 'label_relative_replay_latency_seconds': label_relative,
-                'attribution_method': 'closest_source_timestamp_to_human_label',
+                'attribution_method': 'closest_source_timestamp_to_annotation',
             }
         )
     for decision_index, decision in enumerate(scorable):
@@ -1579,6 +1827,7 @@ def evaluate_ground_truth(
         'false_negatives': false_negatives,
         'false_positives': false_positives,
         'unscorable_positive_decisions': len(unscorable),
+        'ignored_positive_decisions': len(ignored),
         'detection_accuracy': safe_ratio(true_positives, len(labels)),
         'precision': safe_ratio(true_positives, true_positives + false_positives),
         'recall': safe_ratio(true_positives, true_positives + false_negatives),
@@ -1588,12 +1837,34 @@ def evaluate_ground_truth(
         ),
         'complete': not unscorable,
     }
+    predicted_anomalous = bool(scorable or unscorable)
+    bag_outcome = None
+    if bag_anomalous is not None:
+        bag_outcome = (
+            'true_positive'
+            if bag_anomalous and predicted_anomalous
+            else 'false_negative'
+            if bag_anomalous
+            else 'false_positive'
+            if predicted_anomalous
+            else 'true_negative'
+        )
     return {
+        'source': 'annotation_sidecar',
+        'bag_anomalous': bag_anomalous,
+        'label_count': len(labels),
+        'ignored_interval_count': len(ignored_intervals or []),
+        'bag_classification': {
+            'expected_anomalous': bag_anomalous,
+            'detected_anomalous': predicted_anomalous,
+            'result': bag_outcome,
+        },
         'metrics': metrics,
         'processing_latency': latency_summary(processing_latencies),
         'label_relative_latency': latency_summary(label_latencies),
         'events': events,
         'unscorable_decisions': unscorable,
+        'ignored_decisions': ignored,
         'warnings': warnings,
     }
 
@@ -1652,14 +1923,229 @@ def playback_timeout(bag: BagInfo, settings: RunnerSettings) -> float | None:
     )
 
 
+def configured_model_timeout(configuration: dict[str, Any]) -> float:
+    """Return the detector request timeout using its runtime-compatible default."""
+    llm = configuration.get('llm', {})
+    value = llm.get('timeout_seconds', 30.0) if isinstance(llm, dict) else 30.0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 30.0
+    return parsed if math.isfinite(parsed) and parsed > 0 else 30.0
+
+
+def effective_inference_drain_timeout(
+    configuration: dict[str, Any],
+    settings: RunnerSettings,
+) -> float:
+    """Allow the configured number of serial model passes plus shutdown margin."""
+    calculated = (
+        configured_model_timeout(configuration)
+        * settings.inference_drain_model_passes
+        + settings.shutdown_timeout_seconds
+    )
+    return max(settings.inference_drain_timeout_seconds, calculated)
+
+
+def ollama_candidates(configuration: dict[str, Any]) -> list[str]:
+    """Return de-duplicated Ollama endpoints in detector preference order."""
+    llm = configuration.get('llm', {})
+    if not isinstance(llm, dict):
+        return []
+    configured_hosts = llm.get('ollama_hosts', [])
+    extras = configured_hosts if isinstance(configured_hosts, list) else []
+    values = [
+        llm.get('ollama_host', 'http://127.0.0.1:11434'),
+        *extras,
+        os.environ.get('OLLAMA_HOST'),
+        'http://127.0.0.1:11434',
+        'http://127.0.0.1:21434',
+    ]
+    result = []
+    for value in values:
+        host = str(value or '').strip().rstrip('/')
+        if host and host not in result:
+            result.append(host)
+    return result
+
+
+def ollama_models(host: str, timeout: float = 2.0) -> set[str]:
+    """Read model names from one Ollama tags endpoint."""
+    request = Request(f'{host}/api/tags', method='GET')
+    with urlopen(request, timeout=timeout) as response:
+        payload = json.loads(response.read().decode('utf-8'))
+    models = payload.get('models', []) if isinstance(payload, dict) else []
+    names = set()
+    for model in models if isinstance(models, list) else []:
+        if not isinstance(model, dict):
+            continue
+        name = model.get('model') or model.get('name')
+        if name:
+            names.add(str(name))
+    return names
+
+
+def preflight_model(
+    configuration: dict[str, Any],
+    settings: RunnerSettings,
+) -> dict[str, Any]:
+    """Verify and warm a local model before detector startup and bag playback."""
+    llm = configuration.get('llm', {})
+    if not settings.model_preflight_enabled:
+        return {'status': 'disabled'}
+    if not isinstance(llm, dict) or not bool(llm.get('local', False)):
+        return {
+            'status': 'skipped',
+            'reason': 'Evaluator warm-up currently applies to local Ollama models.',
+        }
+    model = str(llm.get('model', '')).strip()
+    if not model:
+        raise EvaluationStageError(
+            'Model preflight failed: llm.model is empty.',
+            kind='model_preflight',
+        )
+    failures = []
+    selected_host = None
+    for host in ollama_candidates(configuration):
+        try:
+            if model in ollama_models(host):
+                selected_host = host
+                break
+            failures.append(f'{host}: model not installed')
+        except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+            failures.append(f'{host}: {type(exc).__name__}: {exc}')
+    if selected_host is None:
+        raise EvaluationStageError(
+            'Model preflight failed; no reachable Ollama endpoint contains '
+            f'{model!r}. Checked: {"; ".join(failures)}',
+            kind='model_preflight',
+        )
+
+    payload = {
+        'model': model,
+        'messages': [{'role': 'user', 'content': 'ping'}],
+        'stream': False,
+        'think': False,
+        'keep_alive': llm.get('keep_alive', '2m'),
+        'options': {'temperature': 0, 'num_predict': 1},
+    }
+    request = Request(
+        f'{selected_host}/api/chat',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    started = time.monotonic()
+    try:
+        with urlopen(
+            request,
+            timeout=settings.model_preflight_timeout_seconds,
+        ) as response:
+            response.read()
+    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        is_timeout = isinstance(exc, (TimeoutError,)) or 'timed out' in str(exc).lower()
+        raise EvaluationStageError(
+            f'Model preflight warm-up failed at {selected_host}: '
+            f'{type(exc).__name__}: {exc}',
+            kind='model_preflight_timeout' if is_timeout else 'model_preflight',
+            limit_seconds=(
+                settings.model_preflight_timeout_seconds if is_timeout else None
+            ),
+        ) from exc
+    return {
+        'status': 'passed',
+        'provider': 'ollama',
+        'model': model,
+        'host': selected_host,
+        'latency_seconds': time.monotonic() - started,
+    }
+
+
+def add_timeout_event(
+    result: dict[str, Any],
+    kind: str,
+    limit_seconds: float | None,
+    **details: Any,
+) -> None:
+    """Append one de-duplicated structured timeout diagnostic."""
+    event = {'kind': kind, 'limit_seconds': limit_seconds, **details}
+    events = result.setdefault('timeout_events', [])
+    if event not in events:
+        events.append(event)
+
+
+def safe_execution_name(execution_id: str) -> str:
+    """Create a portable directory name from an execution identifier."""
+    return re.sub(r'[^A-Za-z0-9_.-]+', '_', execution_id).strip('._') or 'execution'
+
+
+def retain_execution_logs(
+    result: dict[str, Any],
+    detector_log: Path,
+    player_log: Path,
+    log_root: Path,
+) -> None:
+    """Preserve subprocess logs for failed, timed-out, or backend-error runs."""
+    detector_text = ''
+    try:
+        detector_text = detector_log.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        pass
+    failure_lines = [
+        line.strip()
+        for line in detector_text.splitlines()
+        if '[AAD] LLM call failed.' in line
+    ]
+    if failure_lines:
+        result['backend_failures'] = failure_lines
+        model_timeout = configured_model_timeout(
+            result.get('_runtime_configuration', {})
+        )
+        if any('timeout' in line.lower() or 'timed out' in line.lower() for line in failure_lines):
+            add_timeout_event(
+                result,
+                'model_request',
+                model_timeout,
+                failures=len(failure_lines),
+            )
+
+    problematic = (
+        result.get('status') in {'failed', 'completed_with_timeout'}
+        or bool(failure_lines)
+        or any('contains no model response' in str(item) for item in result.get('warnings', []))
+    )
+    if not problematic:
+        result.pop('_runtime_configuration', None)
+        return
+    sources = [source for source in (detector_log, player_log) if source.is_file()]
+    if not sources:
+        result.pop('_runtime_configuration', None)
+        return
+    destination = log_root / safe_execution_name(str(result.get('execution_id', 'run')))
+    retained = []
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        for source in sources:
+            target = destination / source.name
+            shutil.copy2(source, target)
+            retained.append(str(target))
+    except OSError as exc:
+        result.setdefault('warnings', []).append(
+            f'Could not retain execution logs in {destination}: {exc}'
+        )
+    if retained:
+        result['log_files'] = retained
+    result.pop('_runtime_configuration', None)
+
+
 def execute_one(
     bag: BagInfo,
     experiment: Experiment,
     trial: int,
     settings: RunnerSettings,
     collector: EvaluationCollector | None,
-    labels: list[dict[str, Any]],
-    label_warnings: list[str],
+    annotation_truth: dict[str, Any] | None,
+    log_root: Path,
 ) -> dict[str, Any]:
     """Run one isolated bag/configuration/trial execution."""
     execution_id = f'{experiment.name}:{bag.path.name}:trial-{trial}'
@@ -1672,34 +2158,69 @@ def execute_one(
         'status': 'starting',
         'started_at_utc': started_at.isoformat(),
         'bag_duration_seconds': bag.duration_seconds,
-        'warnings': list(label_warnings),
+        'annotation_file': (
+            annotation_truth.get('source') if annotation_truth is not None else None
+        ),
+        'warnings': (
+            list(annotation_truth.get('warnings', []))
+            if annotation_truth is not None
+            else []
+        ),
         'errors': [],
+        'timeout_events': [],
     }
     raw_topic = str(experiment.aad_config.get('raw_input_topic', '/ai_anomaly_logging'))
     if raw_topic not in bag.topics:
         result['status'] = 'invalid_bag'
         result['errors'].append(f'Required detector input topic {raw_topic!r} is missing.')
         return result
-    if (
-        settings.mode == 'human-labeled'
-        and settings.human_label_topic not in bag.topics
-    ):
+    if settings.mode == 'human-labeled' and annotation_truth is None:
         result['status'] = 'invalid_bag'
-        result['errors'].append(
-            f'Required human-label topic {settings.human_label_topic!r} is missing.'
-        )
+        result['errors'].append('Annotation ground truth was not loaded for this bag.')
+        return result
+    if settings.mode == 'human-labeled' and annotation_truth.get('errors'):
+        result['status'] = 'invalid_bag'
+        result['errors'].extend(annotation_truth['errors'])
         return result
     if settings.dry_run:
         result['status'] = 'dry_run_validated'
         result['ground_truth'] = (
-            {'label_count': len(labels)} if settings.mode == 'human-labeled' else None
+            {
+                'source': 'annotation_sidecar',
+                'annotation_file': annotation_truth['source'],
+                'bag_anomalous': annotation_truth['bag_anomalous'],
+                'label_count': len(annotation_truth['labels']),
+                'ignored_interval_count': len(
+                    annotation_truth['ignored_intervals']
+                ),
+            }
+            if settings.mode == 'human-labeled'
+            else None
         )
         return result
 
     assert collector is not None
     collector.reset()
+    contaminants = collector.wait_for_clean_graph(
+        raw_topic,
+        settings.graph_clean_timeout_seconds,
+    )
+    if contaminants:
+        result['status'] = 'failed'
+        result['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
+        result['graph_contamination'] = contaminants
+        descriptions = ', '.join(
+            f"{item['role']} {item['topic']} from "
+            f"{item['node_namespace']}{item['node_name']}"
+            for item in contaminants
+        )
+        result['errors'].append(
+            'ROS graph contamination detected before replay: ' + descriptions
+        )
+        return result
     detector_process: subprocess.Popen[Any] | None = None
     player_process: subprocess.Popen[Any] | None = None
+    collection_started = False
     start_monotonic = time.monotonic()
 
     with tempfile.TemporaryDirectory(prefix='aad_offline_eval_') as temp_name:
@@ -1708,19 +2229,30 @@ def execute_one(
         detector_log = temp_directory / 'detector.log'
         player_log = temp_directory / 'player.log'
         runtime_config = copy.deepcopy(experiment.aad_config)
-        runtime_config['api_artifact_output_dir'] = str(artifact_directory)
-        runtime_config['api_artifact_max_files'] = 0
         runtime_config_path = temp_directory / 'aad_config.yaml'
-        runtime_config_path.write_text(
-            yaml.safe_dump(runtime_config, sort_keys=False), encoding='utf-8'
-        )
-        environment = {**os.environ, 'AAD_CONFIG_PATH': str(runtime_config_path)}
-        if settings.provider_config_path is not None:
-            environment['AAD_LLM_PROVIDERS_PATH'] = str(
-                settings.provider_config_path
-            )
+        result['_runtime_configuration'] = runtime_config
 
         try:
+            preflight = preflight_model(runtime_config, settings)
+            result['model_preflight'] = preflight
+            if preflight.get('host'):
+                llm = runtime_config.setdefault('llm', {})
+                if isinstance(llm, dict):
+                    llm['ollama_host'] = preflight['host']
+            runtime_config['api_artifact_output_dir'] = str(artifact_directory)
+            runtime_config['api_artifact_max_files'] = 0
+            runtime_config_path.write_text(
+                yaml.safe_dump(runtime_config, sort_keys=False), encoding='utf-8'
+            )
+            environment = {
+                **os.environ,
+                'AAD_CONFIG_PATH': str(runtime_config_path),
+                'ROS_DOMAIN_ID': str(settings.ros_domain_id),
+            }
+            if settings.provider_config_path is not None:
+                environment['AAD_LLM_PROVIDERS_PATH'] = str(
+                    settings.provider_config_path
+                )
             with detector_log.open('w', encoding='utf-8') as detector_stream:
                 detector_process = subprocess.Popen(
                     settings.detector_command,
@@ -1740,13 +2272,17 @@ def execute_one(
                         f'Detector exited during startup with code '
                         f'{detector_process.returncode}.'
                     )
-                raise EvaluationError(
+                raise EvaluationStageError(
                     'Detector readiness timed out before its input subscription '
-                    'and decision publisher appeared.'
+                    'and decision publisher appeared.',
+                    kind='detector_startup',
+                    limit_seconds=settings.startup_timeout_seconds,
                 )
             if settings.startup_grace_seconds:
                 time.sleep(settings.startup_grace_seconds)
 
+            collector.begin_collection()
+            collection_started = True
             playback_command = [
                 'ros2',
                 'bag',
@@ -1769,25 +2305,36 @@ def execute_one(
                     text=True,
                 )
             try:
-                player_process.wait(timeout=playback_timeout(bag, settings))
+                playback_limit = playback_timeout(bag, settings)
+                player_process.wait(timeout=playback_limit)
             except subprocess.TimeoutExpired as exc:
-                stop_process(player_process, settings.shutdown_timeout_seconds)
-                raise EvaluationError('Bag playback exceeded its derived timeout.') from exc
+                raise EvaluationStageError(
+                    'Bag playback exceeded its derived timeout.',
+                    kind='bag_playback',
+                    limit_seconds=playback_limit,
+                ) from exc
             if player_process.returncode != 0:
                 raise EvaluationError(
                     f'Bag playback exited with code {player_process.returncode}.'
                 )
 
+            drain_timeout = effective_inference_drain_timeout(
+                runtime_config,
+                settings,
+            )
+            result['inference_drain'] = {
+                'configured_minimum_seconds': settings.inference_drain_timeout_seconds,
+                'model_passes': settings.inference_drain_model_passes,
+                'effective_timeout_seconds': drain_timeout,
+            }
             drained = collector.wait_for_drain(
                 settings.post_playback_grace_seconds,
-                settings.inference_drain_timeout_seconds,
+                drain_timeout,
                 artifact_directory,
             )
-            if not drained:
-                result['warnings'].append(
-                    'Inference drain timed out; pending work is recorded in reliability metrics.'
-                )
             snapshot = collector.snapshot()
+            collector.end_collection()
+            collection_started = False
             artifacts = read_artifacts(artifact_directory)
             llm_decisions, artifact_warnings = llm_decisions_from_artifacts(
                 artifacts,
@@ -1802,6 +2349,16 @@ def execute_one(
                 len(snapshot['llm_calls']) - len(artifacts),
                 0,
             )
+            if not drained:
+                result['warnings'].append(
+                    'Inference drain timed out; pending work is recorded in reliability metrics.'
+                )
+                add_timeout_event(
+                    result,
+                    'inference_drain',
+                    drain_timeout,
+                    pending_calls=snapshot['pending_llm_calls'],
+                )
             elapsed = time.monotonic() - start_monotonic
             result.update(
                 {
@@ -1813,13 +2370,22 @@ def execute_one(
             )
             if settings.mode == 'human-labeled':
                 result['ground_truth'] = evaluate_ground_truth(
-                    labels,
+                    annotation_truth['labels'],
                     snapshot['decisions'],
                     settings.label_buffer_seconds,
                     settings.playback_rate,
+                    annotation_truth['ignored_intervals'],
+                    annotation_truth['bag_anomalous'],
                 )
+                result['ground_truth']['annotation_file'] = annotation_truth['source']
             else:
                 result['ground_truth'] = None
+        except EvaluationStageError as exc:
+            result['status'] = 'failed'
+            result['errors'].append(str(exc))
+            result['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
+            if exc.limit_seconds is not None:
+                add_timeout_event(result, exc.kind, exc.limit_seconds)
         except EvaluationError as exc:
             result['status'] = 'failed'
             result['errors'].append(str(exc))
@@ -1829,8 +2395,34 @@ def execute_one(
             result['errors'].append(f'Unexpected execution error: {type(exc).__name__}: {exc}')
             result['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
         finally:
-            stop_process(player_process, settings.shutdown_timeout_seconds)
-            stop_process(detector_process, settings.shutdown_timeout_seconds)
+            if collection_started:
+                collector.end_collection()
+            player_forced = stop_process(
+                player_process,
+                settings.shutdown_timeout_seconds,
+            )
+            detector_forced = stop_process(
+                detector_process,
+                settings.shutdown_timeout_seconds,
+            )
+            if player_forced:
+                add_timeout_event(
+                    result,
+                    'player_shutdown',
+                    settings.shutdown_timeout_seconds,
+                )
+            if detector_forced:
+                add_timeout_event(
+                    result,
+                    'detector_shutdown',
+                    settings.shutdown_timeout_seconds,
+                )
+            if (player_forced or detector_forced) and result.get('status') == 'completed':
+                result['status'] = 'completed_with_timeout'
+            retain_execution_logs(result, detector_log, player_log, log_root)
+            result.setdefault(
+                'finished_at_utc', datetime.now(timezone.utc).isoformat()
+            )
     return result
 
 
@@ -1910,6 +2502,24 @@ def aggregate_executions(
                 .get('pending_llm_calls_at_timeout', 0)
                 for item in completed
             ),
+            'timeout_counts': dict(
+                sorted(
+                    Counter(
+                        event.get('kind')
+                        for item in executions
+                        for event in item.get('timeout_events', [])
+                        if isinstance(event, dict) and event.get('kind')
+                    ).items()
+                )
+            ),
+            'backend_failures': sum(
+                len(item.get('backend_failures', []))
+                for item in executions
+                if isinstance(item.get('backend_failures', []), list)
+            ),
+            'runs_with_diagnostic_logs': sum(
+                bool(item.get('log_files')) for item in executions
+            ),
         },
     }
     if mode == 'unlabeled':
@@ -1926,11 +2536,21 @@ def aggregate_executions(
     unscorable = sum(
         item['metrics']['unscorable_positive_decisions'] for item in truth_runs
     )
+    ignored = sum(
+        item['metrics'].get('ignored_positive_decisions', 0) for item in truth_runs
+    )
+    bag_outcomes = Counter(
+        item.get('bag_classification', {}).get('result')
+        for item in truth_runs
+        if item.get('bag_classification', {}).get('result')
+    )
+    bag_total = sum(bag_outcomes.values())
     result['ground_truth_metrics'] = {
         'true_positives': true_positives,
         'false_negatives': false_negatives,
         'false_positives': false_positives,
         'unscorable_positive_decisions': unscorable,
+        'ignored_positive_decisions': ignored,
         'detection_accuracy': safe_ratio(
             true_positives, true_positives + false_negatives
         ),
@@ -1941,6 +2561,14 @@ def aggregate_executions(
             2 * true_positives + false_positives + false_negatives,
         ),
         'complete': not unscorable and len(truth_runs) == len(completed),
+        'bag_true_positives': bag_outcomes['true_positive'],
+        'bag_true_negatives': bag_outcomes['true_negative'],
+        'bag_false_positives': bag_outcomes['false_positive'],
+        'bag_false_negatives': bag_outcomes['false_negative'],
+        'bag_accuracy': safe_ratio(
+            bag_outcomes['true_positive'] + bag_outcomes['true_negative'],
+            bag_total,
+        ),
     }
     return result
 
@@ -2313,6 +2941,9 @@ def reserve_report_path(directory: Path, started: datetime) -> Path:
     while True:
         postfix = '' if suffix == 0 else f'-{suffix + 1}'
         candidate = directory / f'{stem}{postfix}.md'
+        if candidate.with_suffix('.json').exists():
+            suffix += 1
+            continue
         try:
             # Exclusive creation prevents concurrent evaluators started in the
             # same second from selecting the same output file.
@@ -2335,7 +2966,7 @@ def source_revision() -> str | None:
     try:
         result = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
-            cwd=Path(__file__).resolve().parent,
+            cwd=Path(__file__).resolve().parents[2],
             capture_output=True,
             text=True,
             timeout=5,
@@ -2405,6 +3036,7 @@ def metric_rows(metrics: Any) -> list[tuple[str, Any]]:
     latency = metrics.get('model_response_latency', {})
     behavior = metrics.get('behavior', {})
     reliability = metrics.get('reliability', {})
+    truth = metrics.get('ground_truth_metrics')
     rows: list[tuple[str, Any]] = []
     if 'elapsed_seconds' in metrics:
         rows.append(('Elapsed time', seconds_text(metrics.get('elapsed_seconds'))))
@@ -2442,6 +3074,30 @@ def metric_rows(metrics: Any) -> list[tuple[str, Any]]:
             ),
         ]
     )
+    if isinstance(truth, dict):
+        rows.extend(
+            [
+                ('Truth events: true positives', truth.get('true_positives', 0)),
+                ('Truth events: false negatives', truth.get('false_negatives', 0)),
+                ('Truth events: false positives', truth.get('false_positives', 0)),
+                ('Truth event precision', ratio_text(truth.get('precision'))),
+                ('Truth event recall', ratio_text(truth.get('recall'))),
+                ('Truth event F1', ratio_text(truth.get('f1'))),
+                ('Bag-level accuracy', ratio_text(truth.get('bag_accuracy'))),
+                ('Bag true positives', truth.get('bag_true_positives', 0)),
+                ('Bag true negatives', truth.get('bag_true_negatives', 0)),
+                ('Bag false positives', truth.get('bag_false_positives', 0)),
+                ('Bag false negatives', truth.get('bag_false_negatives', 0)),
+                (
+                    'Unscorable positive decisions',
+                    truth.get('unscorable_positive_decisions', 0),
+                ),
+                (
+                    'Ignored positive decisions',
+                    truth.get('ignored_positive_decisions', 0),
+                ),
+            ]
+        )
     return rows
 
 
@@ -2604,16 +3260,36 @@ def append_report_overview(lines: list[str], report: dict[str, Any]) -> None:
 
 
 def render_ground_truth(lines: list[str], truth: Any) -> None:
-    """Append human-label metrics without exposing raw cached messages."""
+    """Append annotation-sidecar metrics without exposing raw cached messages."""
     if not isinstance(truth, dict):
         return
-    lines.extend(['', '#### Human-label results', ''])
+    lines.extend(['', '#### Annotation ground-truth results', ''])
+    source_rows = [
+        ('Annotation file', truth.get('annotation_file')),
+        ('Bag expected anomalous', truth.get('bag_anomalous')),
+        ('Positive truth events', truth.get('label_count')),
+        ('Ignored intervals', truth.get('ignored_interval_count')),
+        (
+            'Bag classification',
+            truth.get('bag_classification', {}).get('result')
+            if isinstance(truth.get('bag_classification'), dict)
+            else None,
+        ),
+    ]
+    lines.extend(markdown_table(('Ground truth', 'Value'), source_rows))
+    lines.extend(['', '**Event metrics**', ''])
     metrics = truth.get('metrics', {})
     rows = []
     if isinstance(metrics, dict):
         for key, value in metrics.items():
             label = key.replace('_', ' ').capitalize()
-            if key in {'detection_accuracy', 'precision', 'recall', 'f1'}:
+            if key in {
+                'detection_accuracy',
+                'precision',
+                'recall',
+                'f1',
+                'bag_accuracy',
+            }:
                 value = ratio_text(value)
             rows.append((label, value))
     lines.extend(markdown_table(('Metric', 'Result'), rows))
@@ -2799,6 +3475,7 @@ def append_execution_details(
             'Recorded bag duration',
             seconds_text(execution.get('bag_duration_seconds')),
         ),
+        ('Annotation file', execution.get('annotation_file')),
     ]
     lines.extend(markdown_table(('Item', 'Value'), run_rows))
     lines.extend(['', '**Run metrics**', ''])
@@ -3007,10 +3684,602 @@ def append_configuration_details(
             append_execution_details(lines, execution)
 
 
-def render_report_markdown(report: dict[str, Any]) -> str:
-    """Render a detailed Markdown report from structured evaluation results."""
+def report_executions(
+    report: dict[str, Any],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Return configuration/execution pairs in report order."""
+    return [
+        (configuration, execution)
+        for configuration in report.get('configurations', [])
+        if isinstance(configuration, dict)
+        for execution in configuration.get('executions', [])
+        if isinstance(execution, dict)
+    ]
+
+
+def short_path(value: Any) -> str | None:
+    """Reduce a report path to its final component."""
+    if not isinstance(value, (str, Path)) or not str(value):
+        return None
+    return Path(value).name
+
+
+def execution_status_text(executions: Sequence[dict[str, Any]]) -> str:
+    """Summarize one configuration's execution statuses."""
+    statuses = Counter(str(item.get('status', 'unknown')) for item in executions)
+    if not statuses:
+        return 'Not run'
+    if len(statuses) == 1:
+        return next(iter(statuses)).replace('_', ' ').title()
+    return ', '.join(
+        f'{status.replace("_", " ").title()}: {count}'
+        for status, count in sorted(statuses.items())
+    )
+
+
+def captured_decision_count(metrics: dict[str, Any]) -> int:
+    """Count reportable model responses represented by aggregate metrics."""
+    behavior = metrics.get('behavior', {})
+    if not isinstance(behavior, dict):
+        return 0
+    return sum(
+        int(behavior.get(key, 0) or 0)
+        for key in (
+            'positive_decisions',
+            'negative_decisions',
+            'unparseable_decisions',
+        )
+    )
+
+
+def configuration_result_rows(report: dict[str, Any]) -> list[tuple[Any, ...]]:
+    """Build one comparison-first result row per configuration."""
+    rows = []
+    for configuration in report.get('configurations', []):
+        if not isinstance(configuration, dict):
+            continue
+        aggregate = configuration.get('aggregate', {})
+        aggregate = aggregate if isinstance(aggregate, dict) else {}
+        reliability = aggregate.get('reliability', {})
+        reliability = reliability if isinstance(reliability, dict) else {}
+        behavior = aggregate.get('behavior', {})
+        behavior = behavior if isinstance(behavior, dict) else {}
+        truth = aggregate.get('ground_truth_metrics')
+        truth = truth if isinstance(truth, dict) else {}
+        latency = aggregate.get('model_response_latency', {})
+        latency = latency if isinstance(latency, dict) else {}
+        executions = [
+            item
+            for item in configuration.get('executions', [])
+            if isinstance(item, dict)
+        ]
+        responses = captured_decision_count(aggregate)
+        calls = int(reliability.get('llm_calls', 0) or 0)
+        rows.append(
+            (
+                configuration.get('name'),
+                execution_status_text(executions),
+                f'{responses} / {calls}',
+                reliability.get('pending_llm_calls_at_timeout', 0),
+                (
+                    f'{truth.get("true_positives", 0)} / '
+                    f'{truth.get("false_negatives", 0)} / '
+                    f'{truth.get("false_positives", 0)}'
+                    if truth
+                    else '—'
+                ),
+                ratio_text(truth.get('precision')) if truth else '—',
+                ratio_text(truth.get('recall')) if truth else '—',
+                ratio_text(truth.get('f1')) if truth else '—',
+                ratio_text(truth.get('bag_accuracy')) if truth else '—',
+                seconds_text(latency.get('mean_seconds')),
+                behavior.get('alerts', 0),
+            )
+        )
+    return rows
+
+
+def append_reliability_summary(lines: list[str], report: dict[str, Any]) -> None:
+    """Lead with incomplete inference instead of burying it in run details."""
+    overall = report.get('overall', {})
+    overall = overall if isinstance(overall, dict) else {}
+    reliability = overall.get('reliability', {})
+    reliability = reliability if isinstance(reliability, dict) else {}
+    pairs = report_executions(report)
+    timeouts = sum(
+        execution.get('status') == 'completed_with_timeout'
+        for _, execution in pairs
+    )
+    calls = int(reliability.get('llm_calls', 0) or 0)
+    responses = captured_decision_count(overall)
+    pending = int(reliability.get('pending_llm_calls_at_timeout', 0) or 0)
+    if timeouts or pending or responses < calls:
+        lines.extend(
+            [
+                '> **Results incomplete.** '
+                f'{timeouts} of {len(pairs)} run(s) timed out waiting for inference. '
+                f'{responses} of {calls} LLM call(s) produced reportable responses; '
+                f'{pending} remained pending at timeout.',
+                '',
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f'All {len(pairs)} run(s) completed with {responses} reportable '
+                f'response(s) from {calls} LLM call(s).',
+                '',
+            ]
+        )
+
+
+def append_compact_issues(lines: list[str], report: dict[str, Any]) -> None:
+    """Aggregate repeated run warnings into a short diagnostic list."""
+    warnings = [
+        str(message)
+        for _, execution in report_executions(report)
+        for message in execution.get('warnings', [])
+    ]
+    errors = [
+        str(message)
+        for _, execution in report_executions(report)
+        for message in execution.get('errors', [])
+    ]
+    timeout_events = [
+        event
+        for _, execution in report_executions(report)
+        for event in (execution.get('timeout_events') or [])
+        if isinstance(event, dict) and event.get('kind')
+    ]
+    timeout_counts = Counter(str(event['kind']) for event in timeout_events)
+    timeout_warnings = (
+        timeout_counts.get('inference_drain', 0)
+        or sum('Inference drain timed out' in item for item in warnings)
+    )
+    empty_artifacts = sum('contains no model response' in item for item in warnings)
+    count_mismatches = sum('Artifact-file/LLM-call counts differ' in item for item in warnings)
+    recognized = (
+        'Inference drain timed out',
+        'contains no model response',
+        'Artifact-file/LLM-call counts differ',
+    )
+    other = Counter(
+        item for item in warnings if not any(marker in item for marker in recognized)
+    )
+    rows = []
+    if timeout_warnings:
+        rows.append(f'{timeout_warnings} run(s) hit the inference-drain timeout.')
+    timeout_labels = {
+        'model_preflight_timeout': 'model preflight',
+        'detector_startup': 'detector startup',
+        'bag_playback': 'bag playback',
+        'model_request': 'model request',
+        'player_shutdown': 'bag-player shutdown',
+        'detector_shutdown': 'detector shutdown',
+    }
+    rows.extend(
+        f'{count} run event(s) hit the {timeout_labels[kind]} timeout.'
+        for kind, count in sorted(timeout_counts.items())
+        if kind in timeout_labels and count
+    )
+    if empty_artifacts:
+        rows.append(f'{empty_artifacts} API artifact(s) contained no model response.')
+    if count_mismatches:
+        rows.append(
+            f'{count_mismatches} run(s) had different artifact and LLM-call counts.'
+        )
+    backend_failures = sum(
+        len(execution.get('backend_failures', []))
+        for _, execution in report_executions(report)
+        if isinstance(execution.get('backend_failures', []), list)
+    )
+    if backend_failures:
+        rows.append(f'{backend_failures} model backend failure(s) were logged.')
+    log_directories = {
+        str(Path(path).parent)
+        for _, execution in report_executions(report)
+        for path in (execution.get('log_files') or [])
+        if isinstance(path, str)
+    }
+    if log_directories:
+        roots = sorted({Path(path).parent.name for path in log_directories})
+        rows.append('Diagnostic logs retained under ' + ', '.join(f'`{root}/`' for root in roots) + '.')
+    rows.extend(
+        f'{message}' + (f' (repeated {count} times)' if count > 1 else '')
+        for message, count in other.items()
+    )
+    rows.extend(dict.fromkeys(errors))
+    if rows:
+        lines.extend(['## Reliability issues', ''])
+        lines.extend(f'- {row}' for row in rows)
+        lines.append('')
+
+
+def flatten_parameters(value: Any, prefix: str = '') -> dict[str, Any]:
+    """Flatten nested evaluated parameters for a compact comparison table."""
+    if not isinstance(value, dict):
+        return {prefix: value}
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        name = f'{prefix}.{key}' if prefix else str(key)
+        if isinstance(item, dict):
+            result.update(flatten_parameters(item, name))
+        else:
+            result[name] = item
+    return result
+
+
+def parameter_label(name: str) -> str:
+    """Give commonly compared configuration fields concise labels."""
+    labels = {
+        'api_frequency_seconds': 'API interval',
+        'cache_max_items': 'Cache messages',
+        'cache_max_age_seconds': 'Cache age',
+        'llm_min_trigger_importance': 'Trigger importance',
+        'llm.provider': 'Provider',
+        'llm.model_provider': 'Model provider',
+        'llm.model': 'Model',
+        'llm.local': 'Local model',
+        'llm.ollama_host': 'Ollama host',
+        'llm.timeout_seconds': 'Model timeout',
+        'llm.vision_enabled': 'Vision',
+        'llm.image_context_enabled': 'Image context',
+        'llm.image_context_max_frames': 'Routine image frames',
+        'llm.image_max_frames': 'Maximum image frames',
+        'llm.num_ctx': 'Context tokens',
+        'llm.num_predict': 'Output tokens',
+        'llm.image_jpeg_quality': 'JPEG quality',
+        'llm.system_prompt_hash': 'System prompt hash',
+    }
+    return labels.get(name, name.replace('.', ' / ').replace('_', ' ').title())
+
+
+def append_configuration_parameters(lines: list[str], report: dict[str, Any]) -> None:
+    """Show shared settings once and only repeat parameters that differ."""
+    configurations = [
+        item for item in report.get('configurations', []) if isinstance(item, dict)
+    ]
+    if not configurations:
+        return
+    flattened = [
+        flatten_parameters(item.get('evaluated_parameters', {}))
+        for item in configurations
+    ]
+    keys = sorted(set().union(*(values.keys() for values in flattened)))
+    common = [
+        key
+        for key in keys
+        if len({json.dumps(values.get(key), sort_keys=True) for values in flattened}) == 1
+        and flattened[0].get(key) is not None
+    ]
+    differing = [
+        key
+        for key in keys
+        if len({json.dumps(values.get(key), sort_keys=True) for values in flattened}) > 1
+    ]
+    lines.extend(['## Configuration', ''])
+    important_common = [
+        key
+        for key in (
+            'llm.provider',
+            'llm.model_provider',
+            'llm.model',
+            'api_frequency_seconds',
+            'cache_max_items',
+            'cache_max_age_seconds',
+            'llm_min_trigger_importance',
+        )
+        if key in common
+    ]
+    if important_common:
+        values = ', '.join(
+            f'{parameter_label(key)}: `{flattened[0][key]}`'
+            for key in important_common
+        )
+        lines.extend([f'**Shared settings:** {values}.', ''])
+    headers = ('Parameter',) + tuple(item.get('name') for item in configurations)
+    rows: list[tuple[Any, ...]] = [
+        ('Configuration hash',)
+        + tuple(str(item.get('configuration_hash', ''))[:12] for item in configurations)
+    ]
+    rows.extend(
+        (parameter_label(key),) + tuple(values.get(key) for values in flattened)
+        for key in differing
+    )
+    lines.extend(markdown_table(headers, rows))
+    lines.append('')
+
+
+def append_agreement_matrix(lines: list[str], report: dict[str, Any]) -> None:
+    """Replace repeated pairwise sections with one outcome-agreement matrix."""
+    names = [
+        str(item.get('name'))
+        for item in report.get('configurations', [])
+        if isinstance(item, dict)
+    ]
+    if len(names) < 2:
+        return
+    lookup = {}
+    for comparison in report.get('configuration_comparisons', []):
+        if not isinstance(comparison, dict):
+            continue
+        key = frozenset(
+            (comparison.get('left_experiment'), comparison.get('right_experiment'))
+        )
+        shared = int(comparison.get('shared_executions', 0) or 0)
+        agreement = comparison.get('bag_level_positive_agreement')
+        lookup[key] = f'{ratio_text(agreement)} ({shared})' if shared else '—'
+    rows = []
+    for left in names:
+        rows.append(
+            (left,)
+            + tuple(
+                '—' if left == right else lookup.get(frozenset((left, right)), '—')
+                for right in names
+            )
+        )
+    lines.extend(['## Outcome agreement', ''])
+    lines.append('Cells show bag-level agreement and shared run count.')
+    lines.append('')
+    lines.extend(markdown_table(('Configuration', *names), rows))
+    lines.append('')
+
+    if not report.get('experiment', {}).get('semantic_judge_enabled'):
+        return
+    semantic_rows = []
+    for comparison in report.get('configuration_comparisons', []):
+        judged = consistent = errors = matched = 0
+        for execution in comparison.get('executions', []):
+            result = execution.get('api_response_comparison', {})
+            matched += int(result.get('matched_responses', 0) or 0)
+            judged += int(result.get('llm_judged_responses', 0) or 0)
+            consistent += int(result.get('consistent_responses', 0) or 0)
+            errors += int(result.get('judge_errors', 0) or 0)
+        semantic_rows.append(
+            (
+                f'{comparison.get("left_experiment")} vs. '
+                f'{comparison.get("right_experiment")}',
+                matched,
+                judged,
+                ratio_text(safe_ratio(consistent, judged)),
+                errors,
+            )
+        )
+    lines.extend(['### Semantic response agreement', ''])
+    lines.extend(
+        markdown_table(
+            ('Pair', 'Matched', 'Judged', 'Agreement', 'Judge errors'),
+            semantic_rows,
+        )
+    )
+    lines.append('')
+
+
+def append_compact_repeatability(lines: list[str], report: dict[str, Any]) -> None:
+    """Show repeatability only when a bag actually has repeated trials."""
+    rows = []
+    for configuration in report.get('configurations', []):
+        if not isinstance(configuration, dict):
+            continue
+        repeatability = configuration.get('repeatability', {})
+        for item in repeatability.get('bag_consistency', []):
+            trials = int(item.get('completed_trials', 0) or 0)
+            if trials <= 1:
+                continue
+            rows.append(
+                (
+                    configuration.get('name'),
+                    short_path(item.get('bag')),
+                    trials,
+                    ratio_text(item.get('positive_outcome_rate')),
+                    item.get('unanimous_positive_outcome'),
+                    item.get('identical_positive_decision_counts'),
+                )
+            )
+    if rows:
+        lines.extend(['## Repeatability', ''])
+        lines.extend(
+            markdown_table(
+                (
+                    'Configuration',
+                    'Bag',
+                    'Trials',
+                    'Positive outcome rate',
+                    'Same outcome',
+                    'Same positive count',
+                ),
+                rows,
+            )
+        )
+        lines.append('')
+
+
+def append_compact_decisions(lines: list[str], report: dict[str, Any]) -> None:
+    """Show one concise decision table per configuration."""
+    groups: list[tuple[Any, list[tuple[Any, ...]]]] = []
+    has_decisions = False
+    for configuration in report.get('configurations', []):
+        if not isinstance(configuration, dict):
+            continue
+        rows = []
+        for execution in configuration.get('executions', []):
+            if not isinstance(execution, dict):
+                continue
+            for index, decision in enumerate(
+                execution.get('final_decisions', []), start=1
+            ):
+                if not isinstance(decision, dict):
+                    continue
+                rows.append(
+                    (
+                        short_path(execution.get('bag')),
+                        execution.get('trial'),
+                        index,
+                        decision.get('anomaly'),
+                        decision.get('severity'),
+                        decision.get('action'),
+                        seconds_text(decision.get('model_latency_seconds')),
+                        decision.get('summary'),
+                    )
+                )
+        has_decisions = has_decisions or bool(rows)
+        groups.append((configuration.get('name'), rows))
+
+    if has_decisions:
+        lines.extend(['## Model decisions', ''])
+        for name, rows in groups:
+            lines.extend([f'### {name}', ''])
+            if not rows:
+                lines.extend(['No reportable model decisions.', ''])
+                continue
+            lines.extend(
+                markdown_table(
+                    (
+                        'Bag',
+                        'Trial',
+                        '#',
+                        'Anomaly',
+                        'Severity',
+                        'Action',
+                        'Latency',
+                        'Summary',
+                    ),
+                    rows,
+                )
+            )
+            lines.append('')
+
+
+def short_label(value: Any) -> str | None:
+    """Shorten a sidecar-derived event identifier."""
+    if not isinstance(value, str):
+        return None
+    marker = '.annotations.json:'
+    return value.split(marker, 1)[-1] if marker in value else value
+
+
+def append_compact_ground_truth(lines: list[str], report: dict[str, Any]) -> None:
+    """Render event outcomes once and collapse unavailable latency summaries."""
+    rows = []
+    latency_rows = []
+    annotated = False
+    for configuration, execution in report_executions(report):
+        truth = execution.get('ground_truth')
+        if not isinstance(truth, dict):
+            continue
+        annotated = True
+        for event in truth.get('events', []):
+            if not isinstance(event, dict):
+                continue
+            label = event.get('label')
+            decision = event.get('decision')
+            rows.append(
+                (
+                    configuration.get('name'),
+                    short_path(execution.get('bag')),
+                    execution.get('trial'),
+                    str(event.get('result', '')).replace('_', ' ').title(),
+                    short_label(label.get('id')) if isinstance(label, dict) else None,
+                    decision.get('action') if isinstance(decision, dict) else None,
+                    seconds_text(event.get('event_difference_seconds')),
+                )
+            )
+        processing = truth.get('processing_latency', {})
+        relative = truth.get('label_relative_latency', {})
+        processing_count = (
+            int(processing.get('count', 0) or 0)
+            if isinstance(processing, dict)
+            else 0
+        )
+        relative_count = (
+            int(relative.get('count', 0) or 0)
+            if isinstance(relative, dict)
+            else 0
+        )
+        if processing_count or relative_count:
+            latency_rows.append(
+                (
+                    configuration.get('name'),
+                    short_path(execution.get('bag')),
+                    execution.get('trial'),
+                    seconds_text(processing.get('mean_seconds')),
+                    seconds_text(relative.get('mean_seconds')),
+                )
+            )
+    if rows:
+        lines.extend(['## Ground-truth events', ''])
+        lines.extend(
+            markdown_table(
+                (
+                    'Configuration',
+                    'Bag',
+                    'Trial',
+                    'Result',
+                    'Event',
+                    'Action',
+                    'Offset',
+                ),
+                rows,
+            )
+        )
+        lines.append('')
+    if latency_rows:
+        lines.extend(['### Ground-truth latency', ''])
+        lines.extend(
+            markdown_table(
+                (
+                    'Configuration',
+                    'Bag',
+                    'Trial',
+                    'Processing mean',
+                    'Label-relative mean',
+                ),
+                latency_rows,
+            )
+        )
+        lines.append('')
+    elif annotated:
+        lines.extend(
+            [
+                'Ground-truth latency was unavailable because replay observation '
+                'timestamps were not retained.',
+                '',
+            ]
+        )
+
+
+def append_run_metadata(lines: list[str], report: dict[str, Any]) -> None:
+    """Retain compact per-run provenance without repeating metric tables."""
+    rows = []
+    for configuration, execution in report_executions(report):
+        metrics = execution.get('metrics')
+        metrics = metrics if isinstance(metrics, dict) else {}
+        rows.append(
+            (
+                configuration.get('name'),
+                short_path(execution.get('bag')),
+                execution.get('trial'),
+                str(execution.get('status', '')).replace('_', ' ').title(),
+                seconds_text(metrics.get('elapsed_seconds')),
+                short_path(execution.get('annotation_file')),
+            )
+        )
+    if rows:
+        lines.extend(['## Run metadata', ''])
+        lines.extend(
+            markdown_table(
+                ('Configuration', 'Bag', 'Trial', 'Status', 'Elapsed', 'Annotation'),
+                rows,
+            )
+        )
+        lines.append('')
+
+
+def render_report_markdown(
+    report: dict[str, Any], detail_filename: str | None = None
+) -> str:
+    """Render a compact comparison-first Markdown report."""
     experiment = report['experiment']
-    overall = report['overall']
     status = str(experiment['run_status']).replace('_', ' ').title()
     lines = [
         '# Offline Anomaly-Detection Evaluation',
@@ -3018,94 +4287,118 @@ def render_report_markdown(report: dict[str, Any]) -> str:
         f'**Status:** {status}',
         '',
     ]
-    append_report_overview(lines, report)
-    lines.extend(['## Experiment summary', ''])
+    append_reliability_summary(lines, report)
+    lines.extend(['## Results by configuration', ''])
+    lines.extend(
+        markdown_table(
+            (
+                'Configuration',
+                'Status',
+                'Responses / calls',
+                'Pending',
+                'TP / FN / FP',
+                'Precision',
+                'Recall',
+                'F1',
+                'Bag accuracy',
+                'Mean latency',
+                'Alerts',
+            ),
+            configuration_result_rows(report),
+        )
+    )
+    lines.append('')
+    if experiment.get('evaluation_mode') == 'unlabeled':
+        lines.extend(
+            [
+                '> Unlabeled mode reports behavior and agreement, not accuracy.',
+                '',
+            ]
+        )
+    append_compact_issues(lines, report)
+    append_configuration_parameters(lines, report)
+    append_agreement_matrix(lines, report)
+    append_compact_repeatability(lines, report)
+    append_compact_decisions(lines, report)
+    append_compact_ground_truth(lines, report)
+    append_run_metadata(lines, report)
+
+    revision = experiment.get('source_revision')
     execution_count = (
         f'{experiment["attempted_executions"]} attempted / '
         f'{experiment["expected_executions"]} expected'
     )
-    summary_rows = [
-        ('Mode', experiment['evaluation_mode']),
-        ('Started (UTC)', experiment['started_at_utc']),
+    lines.extend(['## Report metadata', ''])
+    metadata_rows = [
+        ('Mode', experiment.get('evaluation_mode')),
+        ('Started (UTC)', experiment.get('started_at_utc')),
         ('Finished (UTC)', experiment.get('finished_at_utc')),
-        ('Playback rate', f'{experiment["playback_rate"]}×'),
-        ('Semantic LLM judging', experiment.get('semantic_judge_enabled', False)),
+        ('Playback rate', f'{experiment.get("playback_rate")}×'),
+        ('ROS domain', experiment.get('ros_domain_id')),
+        (
+            'Inference drain minimum',
+            seconds_text(experiment.get('inference_drain_minimum_seconds')),
+        ),
+        ('Model preflight', experiment.get('model_preflight_enabled')),
         ('Executions', execution_count),
-        ('Configuration file', experiment['evaluation_yaml']),
-        ('Recordings location', experiment['recordings_folder']),
-        ('Source revision', experiment.get('source_revision')),
-        ('Report schema', report['schema_version']),
+        ('Evaluation config', short_path(experiment.get('evaluation_yaml'))),
+        ('Recordings', short_path(experiment.get('recordings_folder'))),
+        ('Source revision', str(revision)[:12] if revision else None),
+        ('Report schema', report.get('schema_version')),
+        ('Detailed JSON', detail_filename),
     ]
-    lines.extend(markdown_table(('Item', 'Value'), summary_rows))
-    lines.extend(['', '**Recordings**', ''])
+    lines.extend(markdown_table(('Item', 'Value'), metadata_rows))
+    lines.extend(['', '**Bags**', ''])
     lines.extend(
         markdown_table(
             ('Bag', 'Recorded duration'),
             [
-                (bag['path'], seconds_text(bag.get('duration_seconds')))
-                for bag in experiment['bags']
+                (short_path(bag.get('path')), seconds_text(bag.get('duration_seconds')))
+                for bag in experiment.get('bags', [])
+                if isinstance(bag, dict)
             ],
         )
     )
-    if experiment['evaluation_mode'] == 'unlabeled':
-        lines.extend(
-            [
-                '',
-                '> This was an unlabeled evaluation. Detection counts and '
-                'configuration agreement describe replay behavior only; they are '
-                'not accuracy measurements.',
-            ]
-        )
-
-    lines.extend(['', '## Overall results', ''])
-    execution_rows = [
-        ('Expected executions', overall['executions_expected']),
-        ('Completed executions', overall['executions_completed']),
-        ('Failed executions', overall['executions_failed']),
-        ('Invalid executions', overall['executions_invalid']),
-    ]
-    lines.extend(markdown_table(('Metric', 'Result'), execution_rows))
-    lines.extend(['', '### Overall behavior and latency', ''])
-    lines.extend(markdown_table(('Metric', 'Result'), metric_rows(overall)))
-
-    append_configuration_comparisons(
-        lines, report.get('configuration_comparisons', [])
-    )
-    append_configuration_details(lines, report['configurations'])
-
     lines.extend(
         [
             '',
-            '---',
-            '',
-            'Raw periodic messages, API artifacts, and process logs are omitted '
-            'from this report.',
+            'Full responses, error context, detailed metrics, and diagnostics are '
+            'stored in the companion JSON file.',
             '',
         ]
     )
     return '\n'.join(lines)
 
 
-def write_report(report: dict[str, Any], path: Path) -> None:
-    """Atomically write the final or interrupted-run report."""
+def atomic_write_text(path: Path, content: str) -> None:
+    """Write one report artifact atomically."""
     temporary_path: Path | None = None
     try:
-        rendered = render_report_markdown(report)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f'.{path.name}.', suffix='.tmp', dir=path.parent
         )
         temporary_path = Path(temporary_name)
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-            stream.write(rendered)
+            stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, path)
         temporary_path = None
-    except (OSError, TypeError, ValueError) as exc:
-        raise EvaluationError(f'Could not write report {path}: {exc}') from exc
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def write_report(report: dict[str, Any], path: Path) -> None:
+    """Atomically write compact Markdown and detailed JSON reports."""
+    detail_path = path.with_suffix('.json')
+    try:
+        rendered = render_report_markdown(report, detail_path.name)
+        serialized = json.dumps(report, indent=2, ensure_ascii=False) + '\n'
+        atomic_write_text(detail_path, serialized)
+        atomic_write_text(path, rendered)
+    except (OSError, TypeError, ValueError) as exc:
+        raise EvaluationError(f'Could not write report {path}: {exc}') from exc
 
 
 def evaluated_parameters(configuration: dict[str, Any]) -> dict[str, Any]:
@@ -3127,6 +4420,12 @@ def evaluated_parameters(configuration: dict[str, Any]) -> dict[str, Any]:
         'num_predict',
         'image_jpeg_quality',
     )
+    prompt = llm.get('system_prompt')
+    prompt_hash = (
+        hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]
+        if isinstance(prompt, str)
+        else None
+    )
     return {
         'api_frequency_seconds': configuration.get('api_frequency_seconds'),
         'cache_max_items': configuration.get('cache_max_items'),
@@ -3134,7 +4433,10 @@ def evaluated_parameters(configuration: dict[str, Any]) -> dict[str, Any]:
         'llm_min_trigger_importance': configuration.get(
             'llm_min_trigger_importance'
         ),
-        'llm': {key: llm.get(key) for key in keys},
+        'llm': {
+            **{key: llm.get(key) for key in keys},
+            'system_prompt_hash': prompt_hash,
+        },
     }
 
 
@@ -3193,12 +4495,23 @@ def compact_ground_truth(truth: Any) -> dict[str, Any] | None:
             )
     unscorable = truth.get('unscorable_decisions', [])
     return {
+        'source': truth.get('source'),
+        'annotation_file': truth.get('annotation_file'),
+        'bag_anomalous': truth.get('bag_anomalous'),
+        'bag_classification': truth.get('bag_classification'),
+        'label_count': truth.get('label_count'),
+        'ignored_interval_count': truth.get('ignored_interval_count'),
         'metrics': truth.get('metrics'),
         'processing_latency': truth.get('processing_latency'),
         'label_relative_latency': truth.get('label_relative_latency'),
         'events': compact_events,
         'unscorable_decision_count': (
             len(unscorable) if isinstance(unscorable, list) else 0
+        ),
+        'ignored_decision_count': (
+            len(truth.get('ignored_decisions', []))
+            if isinstance(truth.get('ignored_decisions'), list)
+            else 0
         ),
         'warnings': truth.get('warnings', []),
     }
@@ -3215,8 +4528,15 @@ def compact_execution(execution: dict[str, Any]) -> dict[str, Any]:
         'started_at_utc',
         'finished_at_utc',
         'bag_duration_seconds',
+        'annotation_file',
         'warnings',
         'errors',
+        'timeout_events',
+        'graph_contamination',
+        'model_preflight',
+        'inference_drain',
+        'backend_failures',
+        'log_files',
         'metrics',
         'ground_truth',
     )
@@ -3302,6 +4622,15 @@ def build_report(
             ),
             'recordings_folder': str(settings.bags_path),
             'playback_rate': settings.playback_rate,
+            'ros_domain_id': settings.ros_domain_id,
+            'model_preflight_enabled': settings.model_preflight_enabled,
+            'model_preflight_timeout_seconds': (
+                settings.model_preflight_timeout_seconds
+            ),
+            'inference_drain_minimum_seconds': (
+                settings.inference_drain_timeout_seconds
+            ),
+            'inference_drain_model_passes': settings.inference_drain_model_passes,
             'semantic_judge_enabled': settings.semantic_judge_enabled,
             'source_revision': revision,
             'expected_executions': expected,
@@ -3328,7 +4657,7 @@ def build_report(
 def example_configuration() -> dict[str, Any]:
     """Return a runnable template using the repository's current AAD config."""
     base_config = (
-        Path(__file__).resolve().parents[1]
+        Path(__file__).resolve().parents[2]
         / 'anomaly_detection'
         / 'anomaly_detection'
         / 'config.yaml'
@@ -3338,18 +4667,22 @@ def example_configuration() -> dict[str, Any]:
             'bags': '/path/to/recordings',
             'output_directory': './evaluation_results',
             'provider_config': './llm_providers.yaml',
-            'mode': 'unlabeled',
+            'mode': 'human-labeled',
             'trials': 1,
             'playback_rate': 1.0,
             'continue_on_error': True,
+            'ros_domain_id': 42,
             'startup_timeout_seconds': 15.0,
             'startup_grace_seconds': 3.0,
             'post_playback_grace_seconds': 2.0,
-            'inference_drain_timeout_seconds': 60.0,
+            'inference_drain_timeout_seconds': 180.0,
+            'inference_drain_model_passes': 2,
             'shutdown_timeout_seconds': 20.0,
+            'graph_clean_timeout_seconds': 5.0,
+            'model_preflight_enabled': True,
+            'model_preflight_timeout_seconds': 120.0,
             'label_buffer_seconds': 5.0,
             'semantic_judge_enabled': False,
-            'human_label_topic': None,
         },
         'base_config': str(base_config),
         'experiments': [
@@ -3407,7 +4740,12 @@ def build_parser() -> argparse.ArgumentParser:
         help='Override the number of repetitions for every configuration and bag.',
     )
     parser.add_argument(
-        '--mode', choices=('unlabeled', 'human-labeled'), help='Override YAML mode.'
+        '--mode',
+        choices=('unlabeled', 'human-labeled'),
+        help=(
+            'Override YAML mode; human-labeled uses adjacent '
+            '*.annotations.json sidecars.'
+        ),
     )
     parser.add_argument(
         '--dry-run',
@@ -3428,14 +4766,15 @@ def run_execution_matrix(
     experiments: Sequence[Experiment],
     settings: RunnerSettings,
     collector: EvaluationCollector | None,
-    label_cache: dict[Path, tuple[list[dict[str, Any]], list[str]]],
+    annotation_cache: dict[Path, dict[str, Any]],
     grouped: dict[str, list[dict[str, Any]]],
+    log_root: Path,
 ) -> bool:
     """Execute the requested matrix and return whether it aborted early."""
     for experiment in experiments:
         print(f'Configuration: {experiment.name} ({experiment.config_hash[:12]})')
         for bag in bags:
-            labels, label_warnings = label_cache.get(bag.path, ([], []))
+            annotation_truth = annotation_cache.get(bag.path)
             for trial in range(1, experiment.trials + 1):
                 print(f'  [{trial}/{experiment.trials}] {bag.path.name}')
                 execution = execute_one(
@@ -3444,8 +4783,8 @@ def run_execution_matrix(
                     trial,
                     settings,
                     collector,
-                    labels,
-                    label_warnings,
+                    annotation_truth,
+                    log_root,
                 )
                 grouped[experiment.name].append(execution)
                 if execution['status'] not in {'failed', 'invalid_bag'}:
@@ -3475,22 +4814,20 @@ def run(args: argparse.Namespace) -> Path | None:
     bag_paths = discover_bags(settings.bags_path)
     bags = [inspect_bag(path) for path in bag_paths]
 
-    label_cache: dict[Path, tuple[list[dict[str, Any]], list[str]]] = {}
+    annotation_cache: dict[Path, dict[str, Any]] = {}
     if settings.mode == 'human-labeled':
-        assert settings.human_label_topic is not None
         for bag in bags:
-            label_cache[bag.path] = extract_human_labels(
-                bag,
-                settings.human_label_topic,
-                settings.human_label_positive_regex,
-            )
+            annotation_cache[bag.path] = load_annotation_ground_truth(bag)
 
     expected = sum(experiment.trials for experiment in experiments) * len(bags)
     print(
         f'Preparing {expected} execution(s): {len(bags)} bag(s) × '
-        f'{len(experiments)} configuration(s), mode={settings.mode}'
+        f'{len(experiments)} configuration(s), mode={settings.mode}, '
+        f'ROS domain={settings.ros_domain_id}'
     )
     started = datetime.now(timezone.utc)
+    report_path = reserve_report_path(settings.output_directory, started)
+    log_root = report_path.with_name(f'{report_path.stem}_logs')
     revision = source_revision()
     grouped: dict[str, list[dict[str, Any]]] = {
         experiment.name: [] for experiment in experiments
@@ -3499,10 +4836,12 @@ def run(args: argparse.Namespace) -> Path | None:
     executor: SingleThreadedExecutor | None = None
     spin_thread: threading.Thread | None = None
     spin_stop = threading.Event()
+    previous_ros_domain = os.environ.get('ROS_DOMAIN_ID')
 
     if not settings.dry_run:
         if ROS_IMPORT_ERROR is not None:
             raise EvaluationError(f'ROS 2 Python modules are unavailable: {ROS_IMPORT_ERROR}')
+        os.environ['ROS_DOMAIN_ID'] = str(settings.ros_domain_id)
         rclpy.init()
         collector = EvaluationCollector(settings)
         executor = SingleThreadedExecutor()
@@ -3524,8 +4863,9 @@ def run(args: argparse.Namespace) -> Path | None:
             experiments,
             settings,
             collector,
-            label_cache,
+            annotation_cache,
             grouped,
+            log_root,
         )
     except KeyboardInterrupt:
         interrupted = True
@@ -3537,6 +4877,10 @@ def run(args: argparse.Namespace) -> Path | None:
             executor.shutdown(timeout_sec=5)
             collector.destroy_node()
             rclpy.shutdown()
+        if previous_ros_domain is None:
+            os.environ.pop('ROS_DOMAIN_ID', None)
+        else:
+            os.environ['ROS_DOMAIN_ID'] = previous_ros_domain
 
     if interrupted:
         run_status = 'interrupted'
@@ -3555,7 +4899,6 @@ def run(args: argparse.Namespace) -> Path | None:
         revision=revision,
         run_status=run_status,
     )
-    report_path = reserve_report_path(settings.output_directory, started)
     write_report(report, report_path)
     all_executions = [
         execution
@@ -3568,6 +4911,7 @@ def run(args: argparse.Namespace) -> Path | None:
     print(f'  Completed: {overall["executions_completed"]}')
     print(f'  Failed:    {overall["executions_failed"]}')
     print(f'  Report:    {report_path}')
+    print(f'  Details:   {report_path.with_suffix(".json")}')
     if interrupted:
         raise EvaluationInterrupted(report_path)
     return report_path

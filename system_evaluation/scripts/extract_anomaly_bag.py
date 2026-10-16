@@ -16,7 +16,7 @@ from pathlib import Path
 try:
     from anomaly_annotation_report import write_html
 except ModuleNotFoundError:  # Support importing from the repository root in tests.
-    from scripts.anomaly_annotation_report import write_html
+    from system_evaluation.scripts.anomaly_annotation_report import write_html
 
 
 IMPORTANCE_NAMES = {0: "INFO", 1: "WARNING", 2: "ERROR"}

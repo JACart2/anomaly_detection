@@ -6,8 +6,8 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
-from scripts.anomaly_annotation_report import json_for_script, write_html
-from scripts.extract_anomaly_bag import prepare_output_directory
+from system_evaluation.scripts.anomaly_annotation_report import json_for_script, write_html
+from system_evaluation.scripts.extract_anomaly_bag import prepare_output_directory
 
 
 def sample_record() -> dict:
@@ -77,7 +77,9 @@ class AnnotationReportTests(unittest.TestCase):
 
     def test_annotation_schema_is_version_one(self):
         schema_path = (
-            Path(__file__).parents[1] / "docs" / "anomaly_annotations.schema.json"
+            Path(__file__).parents[1]
+            / "schemas"
+            / "anomaly_annotations.schema.json"
         )
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         self.assertEqual(schema["properties"]["schema_version"]["const"], 1)
