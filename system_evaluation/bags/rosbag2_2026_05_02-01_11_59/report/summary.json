@@ -1,0 +1,15 @@
+{
+  "source_bag": "C:\\Users\\marti\\OneDrive\\Documents\\anomaly_detection\\system_evaluation\\bags\\rosbag2_2026_05_02-01_11_59\\rosbag2_2026_05_02-01_11_59_0.mcap",
+  "anomaly_topic": "/ai_anomaly_logging",
+  "bag_topics": {
+    "/ai_anomaly_logging": "anomaly_msg/msg/AnomalyMsg"
+  },
+  "message_count": 8,
+  "image_count": 8,
+  "importance_counts": {
+    "INFO": 8
+  },
+  "type_counts": {
+    "IMAGE": 8
+  }
+}

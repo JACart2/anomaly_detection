@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JACart2/anomaly_detection/blob/main/docs/anomaly_annotations.schema.json",
+  "title": "JACart anomaly annotations",
+  "description": "Ground-truth metadata, time ranges, and message annotations for one ROS bag.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "bag", "ranges", "annotations"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "bag": {
+      "$ref": "#/$defs/bag"
+    },
+    "ranges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/range"
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/messageAnnotation"
+      }
+    }
+  },
+  "$defs": {
+    "label": {
+      "type": "string",
+      "enum": ["unlabeled", "normal", "anomaly", "uncertain", "ignore"]
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "",
+        "Driver issue",
+        "Dynamic obstacle",
+        "Static obstacle",
+        "Mechanical issue",
+        "Sensor issue",
+        "Unauthorized access",
+        "Route issue",
+        "Other"
+      ]
+    },
+    "bag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "scenario",
+        "category",
+        "anomalous",
+        "description",
+        "environment",
+        "cart",
+        "annotator",
+        "notes"
+      ],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "scenario": {"type": "string"},
+        "category": {"$ref": "#/$defs/category"},
+        "anomalous": {"type": ["boolean", "null"]},
+        "description": {"type": "string"},
+        "environment": {"type": "string"},
+        "cart": {"type": "string"},
+        "annotator": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_timestamp_ns",
+        "end_timestamp_ns",
+        "label",
+        "category",
+        "description"
+      ],
+      "properties": {
+        "start_timestamp_ns": {"type": "integer", "minimum": 0},
+        "end_timestamp_ns": {"type": "integer", "minimum": 0},
+        "start_message_index": {"type": "integer", "minimum": 0},
+        "end_message_index": {"type": "integer", "minimum": 0},
+        "label": {"$ref": "#/$defs/label"},
+        "category": {"$ref": "#/$defs/category"},
+        "description": {"type": "string"}
+      }
+    },
+    "messageAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_index",
+        "recorded_timestamp_ns",
+        "topic",
+        "node_name",
+        "label",
+        "category",
+        "description"
+      ],
+      "properties": {
+        "message_index": {"type": "integer", "minimum": 0},
+        "recorded_timestamp_ns": {"type": "integer", "minimum": 0},
+        "topic": {"type": "string", "minLength": 1},
+        "node_name": {"type": "string"},
+        "label": {"$ref": "#/$defs/label"},
+        "category": {"$ref": "#/$defs/category"},
+        "description": {"type": "string"}
+      }
+    }
+  }
+}
