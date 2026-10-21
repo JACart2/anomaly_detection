@@ -37,6 +37,9 @@ The declaration of the custom message type that the anomaly detection system exp
 Provides utility nodes such as: `fake_camera_data` and `lidar_test_node`. Both publish fake data and may be used to test dataflow in the system without external node access. Run with `ros2 run tester <NODE>`.
 
 ### ./system_evaluation/scripts
+
+See the [Annotation User Guide](system_evaluation/ANNOTATION_USER_GUIDE.md) for
+the complete labeling and annotation export workflow.
 Standalone utility scripts that operate outside the ROS2 graph (not built/installed as part of any package).
 
 `extract_anomaly_bag.py` reads a recorded `.mcap` bag of `AnomalyMsg` records and writes a self-contained report: `messages.json`, `messages.csv`, `summary.json`, extracted images under `images/`, and a searchable/filterable `index.html`. The HTML report also supports bag metadata, per-message labels, time-range labels, browser autosave, and JSON annotation import/export. It works locally without a server. Run with:
@@ -91,6 +94,23 @@ Each trigger script runs as its own ROS node and publishes to the `config.yaml:t
 
 **Optional:**
 - `trigger_scripts/<SCRIPT_NAME>/requirements.txt`
+
+## Bag recording UI
+
+After rebuilding and sourcing the workspace, start the recorder with:
+
+```bash
+ros2 run anomaly_detection bag_recorder_ui_node
+```
+
+Open `http://localhost:5000` to start, pause, resume, or stop recordings. The UI
+writes MCAP bags under `/root/dev_ws/bags` and records `/ai_anomaly_logging` by
+default. Set `BAG_RECORD_TOPICS` to a whitespace-separated topic list or `--all`
+to change the selection. Stop a recording before extracting it for annotation.
+Set the evaluator's `runner.bags` to the resulting bag directory or its parent.
+
+The separate detector dashboard (`ros2 run anomaly_detection aad_dashboard_bridge`)
+uses `http://localhost:5001`, so both interfaces can run together.
 
 ## Offline Testing
 

@@ -18,6 +18,8 @@ try:
 except ModuleNotFoundError:  # Support importing from the repository root in tests.
     from system_evaluation.scripts.anomaly_annotation_report import write_html
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "report"
 
 IMPORTANCE_NAMES = {0: "INFO", 1: "WARNING", 2: "ERROR"}
 TYPE_NAMES = {0: "TEXT", 1: "IMAGE", 2: "DATA"}
@@ -297,7 +299,7 @@ def main() -> None:
     bag = args.bag.resolve()
     if not bag.is_file():
         parser.error(f"Bag does not exist: {bag}")
-    output = (args.output or Path(f"{bag.stem}_report")).resolve()
+    output = (args.output or DEFAULT_OUTPUT_DIR / f"{bag.stem}_report").resolve()
     if output == bag.parent or output == bag:
         parser.error("Output must be a dedicated directory")
     extract(bag, output, args.topic)
