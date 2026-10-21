@@ -7,3 +7,7 @@ log/
 logs/*
 system_evaluation/bags/
 system_evaluation/results/
+
+# Generated legacy evaluator outputs
+system_evaluation/eval_results.json
+system_evaluation/offline_evaluation_report.md

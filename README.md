@@ -94,54 +94,30 @@ Each trigger script runs as its own ROS node and publishes to the `config.yaml:t
 
 ## Offline Testing
 
-A script is provided for replaying recorded bags against one or more experiments. The shared detector configuration and experiment-specific system prompts are declared in `system_evaluation/offline_evaluation.yaml`:
+Use the [Offline Evaluator Instruction Manual](system_evaluation/OFFLINE_EVALUATOR_MANUAL.md)
+for environment setup, recording annotations, experiment configuration, CLI
+options, report interpretation, and troubleshooting.
 
+From the ROS workspace root (normally `/root/dev_ws`), validate the configured
+bags and experiments before running:
+
+```bash
+python3 src/anomaly_detection/system_evaluation/scripts/run_offline_evaluation.py \
+  --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml \
+  --dry-run
 ```
-./src/anomaly_detection/system_evaluation/scripts/run_offline_evaluation.py \
-  --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml
-```
 
-**Notes:**
-- The executable automatically sources the detected ROS installation and nearest workspace `install/setup.bash`
-- Evaluation bags live under `src/anomaly_detection/system_evaluation/bags/`
-- Add or change an experiment prompt through `experiments[].overrides.llm.system_prompt`
-- Run the script from the `dev_ws/` directory; otherwise it will be unable to start `anomaly_detection_node`
+Remove `--dry-run` to replay the bags and call the configured models. Dry runs
+still require ROS and MCAP support to read bag metadata. Edit
+[`offline_evaluation.yaml`](system_evaluation/offline_evaluation.yaml) to select
+recordings, labeled or unlabeled evaluation, trials, and experiment overrides.
+Human-labeled mode uses adjacent `<bag-stem>.annotations.json` sidecars exported
+from the annotation report described above.
 
-### Evaluation annotations
-
-Human-labeled evaluation reads the schema-v1 `<bag-stem>.annotations.json`
-sidecar stored beside each `.mcap` file. Set `runner.mode: human-labeled` in
-`offline_evaluation.yaml`; no label topic or dataset CSV is required. The
-evaluator validates `bag.anomalous`, scores anomaly ranges and per-message
-anomaly labels, and records the annotation filename in the report.
-
-For a ROS bag directory containing `metadata.yaml`, keep the sidecar beside its
-`.mcap` data file inside that directory. Standalone `.mcap` files use the same
-layout shown in the annotation workflow above.
-
-### Reading evaluation reports
-
-The Markdown report is a compact comparison view. A positive decision is a
-model response with `anomaly: true`; immediate safety decisions are counted
-separately because they do not have an original model response. Model latency
-appears only for captured model responses, and unlabeled-mode agreement is not
-ground-truth accuracy. When semantic judging is enabled, semantic agreement
-allows wording changes but flags conflicting anomaly, severity, action, or
-evidence claims. Unparseable decisions have no usable boolean anomaly value.
-
-Each Markdown report has a same-named JSON companion containing full responses,
-error context, detailed metrics, warnings, and event diagnostics.
-
-The evaluator uses the dedicated `runner.ros_domain_id` from
-`offline_evaluation.yaml`, rejects pre-existing detector endpoints in that
-domain, and counts detector callbacks only during the active replay window. For
-local Ollama configurations it verifies that the model is installed and sends a
-one-token warm-up request before replay. Drain limits are calculated from the
-model timeout and allowed serial passes. If a run fails, reaches any timeout, or
-records a backend error, its detector and bag-player logs are retained in a
-same-timestamp `_logs` directory beside the report. Timeout stages remain
-separate in the detailed JSON instead of being collapsed into one generic
-timeout.
+Results are written as timestamped Markdown and JSON reports under the configured
+output directory (by default `system_evaluation/results/`). Check individual run
+statuses and errors before comparing scores; unlabeled agreement is not
+ground-truth accuracy.
 
 ## Artifact Generation
 

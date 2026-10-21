@@ -11,7 +11,8 @@ runner:
 
   # Relative paths are resolved from this YAML file's directory. Pointing at a
   # bag directory selects only that recording for every experiment below.
-  bags: ./bags/madison_test_1_20260909_205036
+  # Add local recordings under bags/ before running; datasets are not shipped.
+  bags: ./bags
   output_directory: ./results
   # API endpoints and credential environment-variable names live separately
   # from experiment/model selection.
