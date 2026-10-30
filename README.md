@@ -1,204 +1,105 @@
 # AI Anomaly Detection
-Last updated: 4/28/2026 
 
-Anomaly Detection for a ROS2 system. Integrates with LiteLLM (https://docs.litellm.ai/docs/) or local Ollama model for determinations. 
+A ROS 2 service that collects telemetry and camera frames, uses local or cloud
+language models to identify anomalies, and publishes alerts and decisions.
+Offline replay tools compare model configurations against recorded bags and
+human annotations.
 
-1. Subscribes to `config.yaml:raw_input_topic` containing AnomalyMsg types.
-2. Blocks duplicate messages with `config.yaml:duplicate_message_min_period_sec`, and converts AnomalyMsgs into compact string format for LLM.
-3. Periodic/on-demand LLM trigger (`config.yaml:trigger_scripts` via ROS node publishing to `config.yaml:trigger_input_topic`).
-4. LLM call using `llm_client.py`; a JSON artifact capturing the cached input data and model response is saved to `config.yaml:api_artifact_output_dir` on each invocation.
-5. LLM response standardization into `Decision` type using `response_handler.py`.
-6. Decision evaluation and alert publishing to `config.yaml:alert_topic`.
-7. `.bag` file of entire run context monitoring `config.yaml:raw_input_topic` if enabled in separate terminal.
+## Documentation
 
-## Prerequisites
+Detailed instructions live in the [`docs/`](docs/) folder:
 
-_It is recommended that this system exists in a Docker container that shares a network with (or contains) the source of ROS2 topics publishing system data. See (https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/Dockerfile)_
+- [Development guide](docs/development.md): code layout, rebuild/source workflow,
+  adding nodes and triggers, and tests.
+- [Usage guide](docs/usage.md): selecting and downloading models, cloud providers,
+  configuration, ROS interfaces, recording bags, and troubleshooting.
+- [Evaluation guide](docs/evaluation.md): replay experiments, annotations,
+  dataset layout, metrics, and reports.
 
-* ROS2 installed
-* Requirements.txt. See (https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/requirements.txt)
-* `.env` for local testing/prod run. Contains the API key associated with the model specified in `config.yaml`
-* Python (>= 3.12 recommended, older versions may cause bugs)
+## Quick start
 
-Follow these steps below for Ollama config on host machine for supporting local model integration (assuming Linux OS)
+Commands assume this repository is at `/root/dev_ws/src/anomaly_detection`.
+Adjust the workspace path for your installation.
 
-1. curl -fsSL https://ollama.com/install.sh | sh
-2. ollama pull `my_model`
+### Prepare and build
 
-_Assert that the downloaded model name matches with the names referenced in the AAD node's config.yaml._
+Use a ROS 2 installation with Python support, `colcon`, and `rosdep`. The commands
+below use ROS 2 Jazzy and Python 3.12; use the Python interpreter associated with
+your ROS installation.
 
-
-## Project Structure
-
-### ./anomaly_msg
-The declaration of the custom message type that the anomaly detection system expects. Any data source that provides context to the anomaly detection service should send information using this message type to the topic specified in `config.yaml:raw_input_topic`.
-
-### ./tester
-Provides utility nodes such as: `fake_camera_data` and `lidar_test_node`. Both publish fake data and may be used to test dataflow in the system without external node access. Run with `ros2 run tester <NODE>`.
-
-### ./system_evaluation/scripts
-
-See the [Annotation User Guide](system_evaluation/ANNOTATION_USER_GUIDE.md) for
-the complete labeling and annotation export workflow.
-Standalone utility scripts that operate outside the ROS2 graph (not built/installed as part of any package).
-
-`extract_anomaly_bag.py` reads a recorded `.mcap` bag of `AnomalyMsg` records and writes a self-contained report: `messages.json`, `messages.csv`, `summary.json`, extracted images under `images/`, and a searchable/filterable `index.html`. The HTML report also supports bag metadata, per-message labels, time-range labels, browser autosave, and JSON annotation import/export. It works locally without a server. Run with:
-```
-python3 system_evaluation/scripts/extract_anomaly_bag.py path/to/bag.mcap [-o output_dir]
-```
-
-The export button downloads `<bag-stem>.annotations.json`. Keep that sidecar beside
-the source bag (or in another persistent dataset directory), not in the generated
-report directory. For example:
-
-```
-system_evaluation/bags/driver_missing_001/
-|-- driver_missing_001.mcap
-|-- driver_missing_001.annotations.json
-`-- report/
-    |-- index.html
-    |-- messages.json
-    |-- messages.csv
-    |-- summary.json
-    `-- images/
-```
-
-The extractor recreates its output directory. As a safety measure, it refuses to
-do so if it finds an `*.annotations.json` file there. The original MCAP is always
-read-only. In-progress edits are keyed to the report path and bag name in browser
-`localStorage`; JSON export remains the canonical dataset artifact.
-
-Annotation files use `schema_version: 1`. Nanosecond timestamps are the primary
-message identity, with topic and node name disambiguating them and message index
-retained as useful provenance. The formal format is documented by
-[`system_evaluation/schemas/anomaly_annotations.schema.json`](system_evaluation/schemas/anomaly_annotations.schema.json).
-
-### ./anomaly_detection
-The ROS2 node declaration for the anomaly detection system. 
-
-`anomaly_detection_node.py` contains the manager that drives the system.
-
-`config.yaml` contains system configuration such as API call frequency, cache size, LLM specs (prompt, local enabling, system_prompt), trigger script specification & trigger topic, input data topic for the AAD system, output alert topic for the AAD system, duplicate message blocking, logging frequency, and artifact output path & size.
-
-`llm_client.py` integrates with the LLM either through an API call in LiteLLM, or through a locally hosted model through the Ollama CLI.
-
-`response_handler.py` standardizes API responses into a `Decision` type.
-
-### ./anomaly_detection/anomaly_detection/triggers
-Each trigger script runs as its own ROS node and publishes to the `config.yaml:trigger_input_topic` topic. Adding a new trigger script requires:
-
-**Required:**
-- `trigger_scripts/<SCRIPT_NAME>/<SCRIPT_NAME>.py` — the ROS node
-- `trigger_scripts/<SCRIPT_NAME>/install.sh`
-- `config.yaml['trigger_scripts']` entry: `['<SCRIPT1_NAME>', '<SCRIPT2_NAME>']`
-
-**Optional:**
-- `trigger_scripts/<SCRIPT_NAME>/requirements.txt`
-
-## Bag recording UI
-
-After rebuilding and sourcing the workspace, start the recorder with:
+The project's deployment environment is defined in the
+[Dockerfile](https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/Dockerfile)
+and its companion
+[Python requirements](https://github.com/JACart2/docker_files/blob/main/services/anomaly_detection/requirements.txt).
+The Docker environment installs the dependencies and downloads a default Ollama
+model. If you use that environment, you do not need to install Ollama or download
+the default model again. For a manual environment, install the dependencies from
+the linked requirements file before building. A container should share ROS
+connectivity with the nodes providing telemetry.
 
 ```bash
-ros2 run anomaly_detection bag_recorder_ui_node
+cd /root/dev_ws
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src/anomaly_detection --ignore-src -r -y
+colcon build --symlink-install --packages-select anomaly_msg anomaly_detection tester
+source install/setup.bash
 ```
 
-Open `http://localhost:5000` to start, pause, resume, or stop recordings. The UI
-writes MCAP bags under `/root/dev_ws/bags` and records `/ai_anomaly_logging` by
-default. Set `BAG_RECORD_TOPICS` to a whitespace-separated topic list or `--all`
-to change the selection. Stop a recording before extracting it for annotation.
-Set the evaluator's `runner.bags` to the resulting bag directory or its parent.
+### Configure and run
 
-The separate detector dashboard (`ros2 run anomaly_detection aad_dashboard_bridge`)
-uses `http://localhost:5001`, so both interfaces can run together.
+The Dockerfile downloads a default Ollama model. Check the model, endpoint, and
+artifact output directory in
+[`config.yaml`](anomaly_detection/anomaly_detection/config.yaml).
+See the [usage guide](docs/usage.md#configure-inference) to download and select a
+different model or configure a cloud provider.
 
-## Offline Testing
-
-Use the [Offline Evaluator Instruction Manual](system_evaluation/OFFLINE_EVALUATOR_MANUAL.md)
-for environment setup, recording annotations, experiment configuration, CLI
-options, report interpretation, and troubleshooting.
-
-From the ROS workspace root (normally `/root/dev_ws`), validate the configured
-bags and experiments before running:
+From `/root/dev_ws`, after building and sourcing the workspace:
 
 ```bash
-python3 src/anomaly_detection/system_evaluation/scripts/run_offline_evaluation.py \
-  --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml \
-  --dry-run
-```
-
-Remove `--dry-run` to replay the bags and call the configured models. Dry runs
-still require ROS and MCAP support to read bag metadata. Edit
-[`offline_evaluation.yaml`](system_evaluation/offline_evaluation.yaml) to select
-recordings, labeled or unlabeled evaluation, trials, and experiment overrides.
-Human-labeled mode uses adjacent `<bag-stem>.annotations.json` sidecars exported
-from the annotation report described above.
-
-Results are written as timestamped Markdown and JSON reports under the configured
-output directory (by default `system_evaluation/results/`). Check individual run
-statuses and errors before comparing scores; unlabeled agreement is not
-ground-truth accuracy.
-
-## Artifact Generation
-
-Each time the LLM is invoked, a JSON artifact is written to `config.yaml:api_artifact_output_dir` capturing a snapshot of the system state. 
-
-Each artifact includes:
-- **Artifact ID** — unique traceable identifier
-- **Cached Data** — the log messages collected before the LLM call
-- **API Response** — the structured decision returned by the LLM (anomaly flag, severity, action, summary)
-
-
-## System Diagrams
-
-### Architecture Diagram
-![Architecture Diagram](docs/architecture_diagram.jpeg)
-
-### Dataflow Diagram
-![Dataflow Diagram](docs/dataflow_diagram.jpeg)
-
-## Usage
-
-Start the anomaly detection node:
-
-```
+export AAD_CONFIG_PATH="$PWD/src/anomaly_detection/anomaly_detection/anomaly_detection/config.yaml"
 ros2 run anomaly_detection anomaly_detection_node
 ```
 
-For local inference, install Ollama and the configured model. For cloud
-inference, select a provider profile and model in the AAD/evaluation YAML:
-
-```yaml
-llm:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
-  local: false
-```
-
-Offline evaluation reads endpoint and authentication setup from the separate
-`runner.provider_config` file. `system_evaluation/llm_providers.yaml` contains
-ready-to-use OpenAI and Anthropic profiles. Profiles reference environment
-variable names rather than containing secrets:
-
-```yaml
-providers:
-  anthropic:
-    litellm_provider: anthropic
-    api_key_env: ANTHROPIC_API_KEY
-```
-
-Export the referenced key before launching the evaluator:
+In another terminal, source the ROS and workspace environments and publish a test
+warning:
 
 ```bash
-export ANTHROPIC_API_KEY='...'
-python3 system_evaluation/scripts/run_offline_evaluation.py \
-  --config system_evaluation/offline_evaluation.yaml
+cd /root/dev_ws
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 topic pub --once /ai_anomaly_logging anomaly_msg/msg/AnomalyMsg \
+  "{node_name: 'readme_test', importance: 1, type: 0, msg: 'Localization updates are delayed; investigate sensor health.'}"
+ros2 topic echo /aad/decisions
 ```
 
-Use `--provider-config PATH` to select a different profile file. Direct node
-runs may instead set `AAD_LLM_PROVIDERS_PATH` or `llm.provider_config`.
+Decisions appear after scheduling and inference complete. Anomaly alerts are
+published on `/aad/alerts`; invocation artifacts are written to the configured
+output directory. See the [usage guide](docs/usage.md) for output formats and
+troubleshooting.
 
-See `config.yaml` for full deployment configuration options, including model selection, topic names, and trigger script registration.
+## Making changes
+
+**After every code change, run `colcon build`, then `source install/setup.bash`,
+and restart affected nodes.** Run the build from `/root/dev_ws` using the package
+selection above. Source the updated environment in every terminal launching nodes.
+Follow the same sequence after changes to packaged configuration and resources.
+See the [development guide](docs/development.md) for the full workflow and tests.
+
+## Recording and evaluation
+
+The [usage guide](docs/usage.md#bag-recording-ui) explains the bag recorder UI
+and detector dashboard. For replay and labeling, start with the
+[evaluation guide](docs/evaluation.md), which links to the detailed evaluator
+and annotation manuals.
+
+## Architecture
+
+The detector caches telemetry and images, schedules local or cloud model calls,
+normalizes model responses, and publishes decisions and alerts. High-severity
+inputs can publish an immediate stop alert before inference completes.
+
+- [Architecture diagram](docs/architecture_diagram.jpeg)
+- [Dataflow diagram](docs/dataflow_diagram.jpeg)
 
 ## Attributions
 Created by John Rosario Cruz (gr8jj28@gmail.com), Allie O'Keeffe, & Christopher Michael Hubbard.
