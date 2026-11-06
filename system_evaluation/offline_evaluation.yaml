@@ -1,0 +1,142 @@
+# Batch offline replay evaluation configuration.
+#
+# Run from /root/dev_ws with:
+#   ./src/anomaly_detection/system_evaluation/scripts/run_offline_evaluation.py \
+#     --config src/anomaly_detection/system_evaluation/offline_evaluation.yaml
+
+runner:
+  # Human-labeled mode loads each bag's adjacent <bag-stem>.annotations.json
+  # sidecar and reports both bag-level and timestamp/range ground-truth metrics.
+  mode: human-labeled
+
+  # Relative paths are resolved from this YAML file's directory. Pointing at a
+  # bag directory selects only that recording for every experiment below.
+  # Add local recordings under bags/ before running; datasets are not shipped.
+  bags: ./bags
+  output_directory: ./results
+  # API endpoints and credential environment-variable names live separately
+  # from experiment/model selection.
+  provider_config: ./llm_providers.yaml
+
+  # One selected bag x two configurations x the selected trial count.
+  # Increase this value for stronger repeatability estimates or override it
+  # from the terminal with --trials N.
+  # playback_rate is configurable; 1.0 preserves the recording's timing.
+  trials: 1
+  playback_rate: 1.0
+  continue_on_error: true
+
+  # Keep evaluation traffic separate from a live detector on the default
+  # domain. Every evaluator process, detector, and bag player uses this domain.
+  ros_domain_id: 42
+
+  # Process lifecycle and inference-drain limits.
+  startup_timeout_seconds: 15.0
+  startup_grace_seconds: 1.0
+  playback_timeout_padding_seconds: 30.0
+  post_playback_grace_seconds: 2.0
+  # Allow a 90-second model request plus one queued request to finish.
+  inference_drain_timeout_seconds: 180.0
+  # The effective drain is at least (model timeout × passes) + shutdown margin.
+  inference_drain_model_passes: 2
+  shutdown_timeout_seconds: 20.0
+  # Refuse to replay when another detector is already visible in this domain.
+  graph_clean_timeout_seconds: 5.0
+
+  # Confirm the local Ollama endpoint/model and run a one-token warm-up before
+  # each replay. Remote provider configurations are reported as skipped.
+  model_preflight_enabled: true
+  model_preflight_timeout_seconds: 120.0
+
+  # A positive decision may fall this far before/after an annotated point or
+  # range and still match that truth event.
+  label_buffer_seconds: 5.0
+
+  # Semantic response judging makes extra model calls after all replays finish.
+  # Keep it disabled for faster reports; enable it when summary-level comparison
+  # is worth the additional inference time.
+  semantic_judge_enabled: false
+
+  # Existing AAD topics. Override these only if the runtime node changes them.
+  decision_topic: /aad/decisions
+  alert_topic: /aad/alerts
+  llm_called_topic: /aad/llm_called
+  formatted_topic: /aad/formatted_messages
+
+  detector_command:
+    - ros2
+    - run
+    - anomaly_detection
+    - anomaly_detection_node
+
+# Every experiment starts from the production detector configuration. Keep
+# prompt variants here so an offline study does not require copied AAD configs.
+base_config: ../anomaly_detection/anomaly_detection/config.yaml
+
+experiments:
+  - name: local-baseline
+    overrides:
+      llm:
+        num_ctx: 2048
+        num_predict: 192
+        image_jpeg_quality: 65
+        system_prompt: >-
+          You are an anomaly detection assistant for an autonomous vehicle system.
+          Consider node sources, severity, message content, and other relevant aspects of the provided logs.
+          For MOLA localization health, do not expect a legacy fitness score. Evaluate active/inactive state, ICP quality, dropped frame ratio, stale or missing MOLA pose updates, LiDAR cloud freshness, relocalization requests, and pose-jump or unreasonable-speed/yaw-rate warnings.
+          Analyze the provided log messages and respond ONLY with a JSON object.
+          No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
+          Use exactly this format:
+          {"anomaly": true/false, "severity": "low|medium|high|unknown",
+          "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
+
+  - name: local-golf-cart
+    overrides:
+      llm:
+        num_ctx: 3072
+        num_predict: 256
+        image_jpeg_quality: 75
+        system_prompt: >-
+          You are an anomaly detection assistant for an autonomous golf cart system.
+          Consider node sources, severity, message content, timing, and overall system behavior in the provided logs.
+          Monitor both system integrity and drive wellbeing, including ride smoothness, stability, responsiveness, and battery health.
+          For MOLA localization health, do not expect a legacy fitness score. Evaluate active/inactive state, ICP quality, dropped frame ratio, stale or missing MOLA pose updates, LiDAR cloud freshness, relocalization requests, and pose-jump or unreasonable-speed/yaw-rate warnings.
+          Analyze the provided log messages and respond ONLY with a JSON object.
+          No markdown, no explanation, no code fences. Only an object starting with "{" and ending with "}" should be returned.
+          Use exactly this format:
+          {"anomaly": true/false, "severity": "low|medium|high|unknown",
+          "action": "stop_cart|alert_admin|none", "summary": "brief explanation"}
+
+  # Select a cloud profile and model here. Endpoint and authentication setup
+  # remains in llm_providers.yaml. Uncomment after exporting ANTHROPIC_API_KEY.
+  # - name: claude_cloud
+  #   overrides:
+  #     llm:
+  #       provider: anthropic
+  #       model: claude-sonnet-4-5-20250929
+  #       local: false
+  #       vision_enabled: false
+  #       timeout_seconds: 60
+
+  # A randomized experiment expands into one configuration per sample. The
+  # sampled LLM values are fixed for every trial of that configuration, so
+  # `trials: 3` repeats the same setting three times. Set seed to reproduce the
+  # sampled configurations in a later run; omit it to generate and report one.
+  #
+  # - name: randomized_llm
+  #   trials: 3
+  #   randomize:
+  #     samples: 4
+  #     seed: 20260909
+  #     llm:
+  #       num_ctx:
+  #         choices: [2048, 3072, 4096]
+  #       num_predict:
+  #         range: [64, 160]
+  #         integer: true
+  #       image_jpeg_quality: [65, 75, 85]
+
+# To compare another model, duplicate an experiment, give it a unique name,
+# and override llm.provider, llm.model, and llm.local as needed. Remote
+# experiments inherit API credentials from the environment; do not store keys
+# in this file.

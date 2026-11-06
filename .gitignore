@@ -1,3 +1,14 @@
 __pycache__/
+.venv/
+.vscode/
+log/
+.pytest_cache/
 .env
 logs/*
+system_evaluation/bags/
+system_evaluation/results/
+system_evaluation/scripts/report/
+
+# Generated legacy evaluator outputs
+system_evaluation/eval_results.json
+system_evaluation/offline_evaluation_report.md

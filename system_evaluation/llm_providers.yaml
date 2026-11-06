@@ -1,0 +1,26 @@
+# Cloud LLM provider profiles used by offline_evaluation.yaml.
+#
+# Keep API keys out of this file. Each api_key_env value names an environment
+# variable that must be exported before starting the evaluator.
+
+providers:
+  openai:
+    litellm_provider: openai
+    api_key_env: OPENAI_API_KEY
+
+  anthropic:
+    litellm_provider: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+
+  # Example OpenAI-compatible service hosted in your own cloud:
+  # company_gpu:
+  #   litellm_provider: openai
+  #   api_base: https://models.example.com/v1
+  #   api_key_env: COMPANY_LLM_API_KEY
+
+  # Azure deployments can also supply their API version here:
+  # company_azure:
+  #   litellm_provider: azure
+  #   api_base_env: AZURE_API_BASE
+  #   api_key_env: AZURE_API_KEY
+  #   api_version_env: AZURE_API_VERSION
